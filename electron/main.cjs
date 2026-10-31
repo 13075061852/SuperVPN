@@ -30,7 +30,7 @@ if (!app.isPackaged) {
 const exec = promisify(execFile);
 let window, tray, state, api, child, runtimeFile, quitting = false, busy = false, admin = false;
 let session = { connected: false, startedAt: null, upload: 0, download: 0, upSpeed: 0, downSpeed: 0, connections: 0 }, logs = [];
-let secret = '', previousTotals = null, subscriptionApi, nodeManager, sourceEdits, importReport = null;
+let secret = '', previousTotals = null, subscriptionApi, nodeManager, sourceEdits, connectionMode, importReport = null;
 let speedTest = { running: false }, speedAbort, speedPromise;
 let testProgress = { running: false, total: 0, completed: 0, concurrency: 0 }, testAbort, testPromise, testUpdateTimer;
 const controllerPort = 19090;
@@ -95,7 +95,7 @@ async function controller(endpoint) {
 async function start() {
   if (session.connected) return;
   if (!global.coreReady) throw new Error('未找到 sing-box 内核。请先运行 npm run core:download，再重新启动客户端');
-  if (state.mode === 'tun' && !admin) throw new Error('TUN 全局接管需要管理员权限。请退出后右键「以管理员身份运行」');
+  if (state.mode !== 'system') { state = connectionMode.systemProxyState(state); await save(); }
   await portAvailable(controllerPort);
   if (state.mode === 'system') await portAvailable(state.settings.mixedPort);
   secret = randomBytes(32).toString('hex');
@@ -315,9 +315,7 @@ async function handle(method, payload) {
       }
     } else if (method === 'mode') {
       if (session.connected) throw new Error('请先断开连接再切换模式');
-      if (!['system', 'tun'].includes(payload)) throw new Error('无效模式');
-      if (payload === 'tun' && state.terminalProxyBackup) throw new Error('请先恢复终端代理，再切换到 TUN');
-      state.mode = payload; await save();
+      state.mode = connectionMode.validateSystemMode(payload); await save();
     } else if (method === 'settings') {
       if (session.connected) {
         if (Object.keys(payload || {}).length !== 1 || !['rule', 'global', 'direct'].includes(payload?.outboundMode)) throw new Error('其他设置仍需断开连接后修改');
@@ -396,6 +394,8 @@ else {
     try { state = { ...state, ...JSON.parse(safeStorage.decryptString(await fs.readFile(dataPath('state.bin')))) }; }
     catch (e) { if (e.code !== 'ENOENT') throw new Error('本地配置无法解密或读取。为避免丢失节点，客户端未覆盖原文件'); }
     state = nodeManager.normalizeNodeState(state);
+    connectionMode = await import(pathToFileURL(path.join(__dirname, '../shared/connection-mode.js')).href);
+    if (state.mode !== 'system') { state = connectionMode.systemProxyState(state); await save(); }
     if (state.settings.honorImportedInsecure === undefined) {
       state.settings = { ...state.settings, honorImportedInsecure: true };
       const changed = new Set(state.nodes.filter(n => n.insecureRequested && !state.subscriptions.some(s => s.id === n.subscriptionId && (s.allowInsecure || s.certificatePolicy === 'strict'))).map(n => n.id));

@@ -1,7 +1,8 @@
 import { defaultState, parseLink } from '../shared/proxy.js';
 import { isSubscriptionUrl } from '../shared/subscription.js';
 import { editNode } from '../shared/source-edits.js';
-let preview = { ...defaultState(), session: { connected: false, startedAt: null, upload: 0, download: 0, upSpeed: 0, downSpeed: 0, connections: 0 }, logs: [], environment: { desktop: false, admin: false, coreReady: false, version: '0.6.0' }, busy: false };
+import { validateSystemMode } from '../shared/connection-mode.js';
+let preview = { ...defaultState(), session: { connected: false, startedAt: null, upload: 0, download: 0, upSpeed: 0, downSpeed: 0, connections: 0 }, logs: [], environment: { desktop: false, admin: false, coreReady: false, version: '0.6.1' }, busy: false };
 // Browser preview is intentionally ephemeral: no credentials in localStorage.
 export const bridge = globalThis.window?.supervpn || {
   onUpdate: () => () => {},
@@ -25,7 +26,7 @@ export const bridge = globalThis.window?.supervpn || {
     if (method === 'deleteNode') { preview.nodes = preview.nodes.filter(n => n.id !== p); if (preview.selectedNodeId === p) preview.selectedNodeId = preview.nodes[0]?.id || null; }
     if (method === 'testNodes') throw new Error('真实延迟测试仅在桌面客户端中可用');
     if (method === 'subscriptionSecurity') throw new Error('证书策略仅在 Windows 桌面客户端中可用');
-    if (method === 'mode') preview.mode = p;
+    if (method === 'mode') preview.mode = validateSystemMode(p);
     if (method === 'settings') {
       if (p.autoStart) throw new Error('开机自启仅在安装后的 Windows 客户端中可用');
       if (p.mixedPort !== undefined && (!Number.isInteger(p.mixedPort) || p.mixedPort < 1024 || p.mixedPort > 65535 || p.mixedPort === 19090)) throw new Error('请输入有效端口，不能使用控制端口 19090');
