@@ -32,6 +32,9 @@ jobs:
       - name: Install dependencies
         if: steps.version.outputs.publish == 'true'
         run: npm ci
+      - name: Install Electron runtime explicitly
+        if: steps.version.outputs.publish == 'true'
+        run: node node_modules/electron/install.js
       - name: Download and verify the pinned core
         if: steps.version.outputs.publish == 'true'
         run: npm run core:download
