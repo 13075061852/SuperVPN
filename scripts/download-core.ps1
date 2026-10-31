@@ -16,9 +16,13 @@ try {
     arm64 = '151a6d3b5a57b13214cd90d0069e7c77b02a11c6930738fa892831cf7020ac52'
   }
   $Expected = $Hashes[$Architecture]
-  $Actual = (Get-FileHash (Join-Path $Work $Asset) -Algorithm SHA256).Hash.ToLowerInvariant()
+  $InputStream = [IO.File]::OpenRead((Join-Path $Work $Asset))
+  $Hasher = [Security.Cryptography.SHA256]::Create()
+  try { $Actual = ([BitConverter]::ToString($Hasher.ComputeHash($InputStream))).Replace('-', '').ToLowerInvariant() }
+  finally { $InputStream.Dispose(); $Hasher.Dispose() }
   if ($Actual -ne $Expected) { throw 'SHA256 mismatch; refusing to install.' }
-  Expand-Archive (Join-Path $Work $Asset) -DestinationPath (Join-Path $Work 'expanded')
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  [IO.Compression.ZipFile]::ExtractToDirectory((Join-Path $Work $Asset), (Join-Path $Work 'expanded'))
   $Exe = Get-ChildItem (Join-Path $Work 'expanded') -Recurse -Filter 'sing-box.exe' | Select-Object -First 1
   if (!$Exe) { throw 'Archive contains no sing-box.exe.' }
   Copy-Item $Exe.FullName (Join-Path $Destination 'sing-box.exe') -Force
