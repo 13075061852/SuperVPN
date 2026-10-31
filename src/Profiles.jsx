@@ -5,6 +5,7 @@ import { subscriptionFacts } from './source-presentation.js';
 import SubscriptionUsage from './SubscriptionUsage';
 import { quotaBytes, quotaProgress } from '../shared/subscription-usage.js';
 import { attachMenuDismissal } from './menu-dismissal.js';
+import { subscriptionInUse } from '../shared/node-manager.js';
 
 export default function Profiles({ data, busy, onImport, onOpen, onAction, onDelete, onDeleteNode, onSecurity, onEdit, selectedGroup }) {
   const root = useRef(null);
@@ -26,7 +27,7 @@ export default function Profiles({ data, busy, onImport, onOpen, onAction, onDel
     return <details className="profile-menu" name="supervpn-source-menu"><summary className="icon-button" aria-label={`${source.name} · ${source.identifier} 操作`}><EllipsisVertical size={17}/></summary><div className="context-menu">
       <button onClick={e => { e.currentTarget.closest('details').open = false; onOpen(source.id); }}><Server size={14}/>查看线路</button>
       <button disabled={busy || (!sub && data.testProgress?.running)} onClick={e => { e.currentTarget.closest('details').open = false; onEdit(sub ? { kind: 'subscription', item: sub } : { kind: 'node', item: node }); }}><Pencil size={14}/>编辑{sub ? '订阅' : '节点'}</button>
-      {sub && <><button disabled={busy} onClick={e => { e.currentTarget.closest('details').open = false; onAction('refreshSubscriptionUsage', sub.id); }}><RefreshCw size={14}/>更新流量</button><button disabled={busy || connected} onClick={e => { e.currentTarget.closest('details').open = false; onAction('refreshSubscription', sub.id); }}><RefreshCw size={14}/>更新订阅</button></>}
+      {sub && <><button disabled={busy} onClick={e => { e.currentTarget.closest('details').open = false; onAction('refreshSubscriptionUsage', sub.id); }}><RefreshCw size={14}/>更新流量</button><button disabled={busy || subscriptionInUse(data, data.session, sub.id)} title={subscriptionInUse(data, data.session, sub.id) ? '当前连接正在使用此订阅，断开后可更新' : '更新此订阅，不影响当前连接'} onClick={e => { e.currentTarget.closest('details').open = false; onAction('refreshSubscription', sub.id); }}><RefreshCw size={14}/>更新订阅</button></>}
       <button disabled={busy || connected} onClick={e => { e.currentTarget.closest('details').open = false; sub ? onDelete(sub) : onDeleteNode(node); }}><Trash2 size={14}/>{sub ? '移除订阅' : '删除节点链接'}</button>
     </div></details>;
   }
@@ -43,7 +44,7 @@ export default function Profiles({ data, busy, onImport, onOpen, onAction, onDel
           return <article key={sub.id} className={`profile-card tone-${['lilac', 'mint', 'lemon', 'peach'][index % 4]} ${active ? 'selected-profile' : ''}`}>
             <div className="source-card-heading"><span className="source-card-icon"><Folder size={18}/></span><button className="source-card-name" aria-label={`选择来源 ${sub.name}`} aria-pressed={active} title={`${sub.name} · ID ${source.identifier} · ${new Date(sub.updatedAt).toLocaleString('zh-CN')} 更新`} onClick={() => onOpen(sub.id)}>{sub.name}{sameName && ` · #${source.identifier}`}</button>{active && <Check className="source-active-check" size={15} aria-label="当前选中来源"/>}{menu(source, sub, null)}</div>
             <SubscriptionUsage subscription={sub} remaining={facts.remaining}/>
-            {(remaining || expiry || facts.reset) && <dl className="source-facts">{remaining && <div><dt>剩余流量</dt><dd>{remaining}</dd></div>}{facts.reset && <div><dt>重置</dt><dd>{facts.reset}</dd></div>}{expiry && <div><dt>到期</dt><dd>{expiry}</dd></div>}</dl>}
+            {(remaining || expiry) && <dl className="source-facts">{remaining && <div><dt>剩余流量</dt><dd>{remaining}</dd></div>}{expiry && <div><dt>到期</dt><dd>{expiry}</dd></div>}</dl>}
           </article>;
         })}
       </div></section>}

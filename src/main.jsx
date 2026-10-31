@@ -10,9 +10,11 @@ import TerminalProxySettings from './TerminalProxySettings';
 import { UpdateSettings, UpdateNotice } from './Updates';
 import SourceEditor from './SourceEditor';
 import WindowPin from './WindowPin';
-import ProgramRouting from './ProgramRouting';
+import Routing from './Routing';
 import { readAutoConnect, writeAutoConnect, startupConnection } from './startup-connection.js';
 import { nodeSourceGroup, prepareManualLinks, selectedSource } from './source-groups.js';
+import { subscriptionInUse } from '../shared/node-manager.js';
+import { createOptimisticNodeSwitch } from './node-switch.js';
 import './styles.css';
 
 const navigation = [{ id: 'overview', label: '仪表盘', icon: Gauge }, { id: 'nodes', label: '线路选择', icon: Server }, { id: 'profiles', label: '节点导入', icon: Folder }, { id: 'rules', label: '分流控制', icon: Network }, { id: 'logs', label: '日志', icon: Terminal }, { id: 'settings', label: '设置', icon: Settings }];
@@ -40,6 +42,8 @@ function Dialog({ children, onClose, title, blocked }) {
 }
 function App() {
   const [data, setData] = useState(null), [page, setPage] = useState('overview'), [nodeGroup, setNodeGroup] = useState(() => { try { return window.localStorage.getItem('supervpn.selectedSource'); } catch { return null; } }), [securityTarget, setSecurityTarget] = useState(null), [editorTarget, setEditorTarget] = useState(null), [modal, setModal] = useState(null), [error, setError] = useState(''), [pending, setPending] = useState(false), [now, setNow] = useState(Date.now());
+  const [pendingNodeId, setPendingNodeId] = useState(null), nodeSwitch = useRef(null);
+  if (!nodeSwitch.current) nodeSwitch.current = createOptimisticNodeSwitch({ request: id => call('selectNode', id), onPending: setPendingNodeId });
   const [links, setLinks] = useState(''), [importName, setImportName] = useState(''), [importMode, setImportMode] = useState('subscription'), [process, setProcess] = useState(''), [action, setAction] = useState('proxy');
   useEffect(() => { if (nodeGroup) { try { window.localStorage.setItem('supervpn.selectedSource', nodeGroup); } catch { /* Selection must work without storage. */ } } }, [nodeGroup]);
   const [autoConnect, setAutoConnect] = useState(() => { try { return readAutoConnect(window.localStorage); } catch { return false; } });
@@ -47,7 +51,14 @@ function App() {
   async function call(method, payload) {
     setPending(true); setError('');
     try { const result = await bridge.call(method, payload); if (result?.settings) setData({ ...result, busy: false }); return result; }
-    catch (e) { setError(e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')); return null; }
+    catch (e) {
+      if (method === 'selectNode') {
+        // Failure may occur after stopping the core. Read actual state rather
+        // than pretending that either node is still connected.
+        try { const actual = await bridge.call('get'); if (actual?.settings) setData({ ...actual, busy: false }); } catch { /* Keep last authoritative broadcast if unavailable. */ }
+      }
+      setError(e.message.replace(/^Error invoking remote method '[^']+': (Error: )?/, '')); return null;
+    }
     finally { setPending(false); }
   }
   if (!data) return <div className="loading"><Mark/>{error || '正在启动…'}</div>;
@@ -77,15 +88,15 @@ function App() {
       <main className={page === 'overview' ? 'dashboard-page' : page === 'nodes' ? 'nodes-page' : page === 'profiles' ? 'profiles-main' : page === 'logs' ? 'logs-page' : ''}>
         {error && !modal && !securityTarget && !editorTarget && <div className="error" role="alert"><span>{error}</span><button className="icon-button" aria-label="关闭提示" onClick={() => setError('')}><CloseIcon/></button></div>}
         {page === 'overview' && <Dashboard data={data} busy={busy} onAction={call} onSetting={setting} onNavigate={setPage} onImport={openImport} duration={duration}/>}
-        {page === 'nodes' && <NodeManager onEdit={openEditor} data={data} preferredGroup={selectedSource(data, nodeGroup)} busy={busy} onSecurity={openSecurity} onAction={call} onImport={openImport} onDeleteNode={node => setModal({ type: 'delete', node })} onDeleteSubscription={subscription => setModal({ type: 'subscription', subscription })} onCleanLegacy={subscription => setModal({ type: 'legacy', subscription })}/>}
+        {page === 'nodes' && <NodeManager onEdit={openEditor} data={data} pendingNodeId={pendingNodeId} preferredGroup={selectedSource(data, nodeGroup)} busy={busy} onSecurity={openSecurity} onAction={(method, payload) => method === 'selectNode' ? nodeSwitch.current(payload) : call(method, payload)} onImport={openImport} onDeleteNode={node => setModal({ type: 'delete', node })} onDeleteSubscription={subscription => setModal({ type: 'subscription', subscription })} onCleanLegacy={subscription => setModal({ type: 'legacy', subscription })}/>}
         {page === 'profiles' && <Profiles selectedGroup={selectedSource(data, nodeGroup)} onEdit={openEditor} data={data} busy={busy} onDeleteNode={node => setModal({ type: 'delete', node })} onSecurity={openSecurity} onImport={openImport} onAction={call} onOpen={id => { setNodeGroup(id); setPage('nodes'); }} onDelete={subscription => setModal({ type: 'subscription', subscription })}/>}
-        {page === 'rules' && <ProgramRouting data={data} busy={busy} onAction={call}/>}
+        {page === 'rules' && <Routing data={data} busy={busy} onAction={call}/>}
         {page === 'logs' && <><PageHeader title="日志"><button className="button quiet" disabled={busy || !data.logs.length} onClick={() => call('clearLogs')}>清空</button></PageHeader>{!data.logs.length ? <Empty icon={Terminal} text="暂无运行记录"/> : <div className="log-list">{[...data.logs].reverse().map((l, i) => <div className={`log-entry ${l.level}`} key={`${l.time}-${i}`}><time>{new Date(l.time).toLocaleTimeString('zh-CN', { hour12: false })}</time><span className="log-level">{l.level}</span><code>{l.message}</code></div>)}</div>}</>}
         {page === 'settings' && <><PageHeader title="设置"/><div className="settings-section"><h3>启动与后台</h3><Setting title="启动后自动连接"><Toggle label="启动后自动连接" checked={autoConnect} disabled={busy || !env.desktop} onChange={() => { try { writeAutoConnect(window.localStorage, !autoConnect); setAutoConnect(!autoConnect); } catch (e) { setError(e.message); } }}/></Setting><Setting title="开机自启"><Toggle label="开机自启" checked={settings.autoStart} disabled={editLocked} onChange={() => setting('autoStart', !settings.autoStart)}/></Setting><Setting title="静默启动"><Toggle label="静默启动" checked={settings.silentStart} disabled={editLocked} onChange={() => setting('silentStart', !settings.silentStart)}/></Setting><Setting title="关闭后驻留托盘"><Toggle label="关闭后驻留托盘" checked={settings.closeToTray} disabled={editLocked} onChange={() => setting('closeToTray', !settings.closeToTray)}/></Setting></div><div className="settings-section"><h3>网络</h3><Setting title="接管方式"><span>系统代理</span></Setting><Setting title="局域网直连"><Toggle label="局域网直连" checked={settings.bypassLan} disabled={editLocked} onChange={() => setting('bypassLan', !settings.bypassLan)}/></Setting><Setting title="本地端口"><input className="port-input" type="number" min="1024" max="65535" key={settings.mixedPort} aria-label="本地代理端口" defaultValue={settings.mixedPort} disabled={editLocked} onBlur={e => { if (Number(e.target.value) !== settings.mixedPort) setting('mixedPort', Number(e.target.value)); }}/></Setting></div><TerminalProxySettings data={data} busy={busy} onAction={call}/><UpdateSettings data={data} busy={busy} onAction={call}/></>}
       </main>
 
     </div>
-    {editorTarget && <Dialog title={editorTarget.kind === 'subscription' ? '编辑订阅' : '编辑节点'} blocked={busy} onClose={closeEditor}><SourceEditor key={`${editorTarget.kind}:${editorTarget.item.id}`} target={editorTarget} connected={session.connected} busy={busy} error={error} onCancel={closeEditor} onSave={async (method, payload) => { const result = await call(method, payload); if (result) closeEditor(); }}/></Dialog>}
+    {editorTarget && <Dialog title={editorTarget.kind === 'subscription' ? '编辑订阅' : '编辑节点'} blocked={busy} onClose={closeEditor}><SourceEditor key={`${editorTarget.kind}:${editorTarget.item.id}`} target={editorTarget} connected={editorTarget.kind === 'subscription' ? subscriptionInUse(data, session, editorTarget.item.id) : session.connected} busy={busy} error={error} onCancel={closeEditor} onSave={async (method, payload) => { const result = await call(method, payload); if (result) closeEditor(); }}/></Dialog>}
     {securityTarget && <Dialog title="订阅连接兼容性" blocked={pending} onClose={() => { setSecurityTarget(null); setError(''); }}><SecurityOptions key={securityTarget.id} subscription={securityTarget} connected={session.connected} pending={pending} error={error} onApply={applySecurity} onCancel={() => { setSecurityTarget(null); setError(''); }}/></Dialog>}
     {modal && <Dialog title={modal === 'import' ? '导入' : modal === 'rule' ? '添加程序' : modal.type === 'subscription' ? '移除订阅' : modal.type === 'legacy' ? '清理旧条目' : '删除节点'} blocked={pending} onClose={() => { setModal(null); setError(''); }}><form onKeyDown={e => { if (e.key === 'Enter' && (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229)) e.preventDefault(); }} onSubmit={async e => {
       e.preventDefault();

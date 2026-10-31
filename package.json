@@ -1,6 +1,6 @@
 {
   "name": "supervpn",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "private": true,
   "description": "A quiet, rule-based Windows proxy client powered by sing-box",
   "type": "module",
@@ -18,14 +18,16 @@
     "core:download": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/download-core.ps1",
     "icons:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-icons.ps1",
     "installer:assets": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-installer-assets.ps1",
-    "dist": "npm run build && npm run installer:assets && electron-builder --win nsis --x64 --publish never"
+    "dist": "node scripts/build-installer.mjs",
+    "dist:ci": "npm run build && npm run installer:assets && electron-builder --win nsis --x64 --publish never"
   },
   "dependencies": {
     "electron-updater": "^6.8.11",
     "flag-icons": "^7.6.0",
     "lucide-react": "^0.468.0",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.4",

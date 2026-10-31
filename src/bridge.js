@@ -2,7 +2,8 @@ import { defaultState, parseLink } from '../shared/proxy.js';
 import { isSubscriptionUrl } from '../shared/subscription.js';
 import { editNode } from '../shared/source-edits.js';
 import { validateSystemMode } from '../shared/connection-mode.js';
-let preview = { ...defaultState(), session: { connected: false, startedAt: null, upload: 0, download: 0, upSpeed: 0, downSpeed: 0, connections: 0 }, logs: [], environment: { desktop: false, admin: false, coreReady: false, version: '0.6.1' }, busy: false };
+import { setWebsiteRule, removeWebsiteRule } from '../shared/website-rules.js';
+let preview = { ...defaultState(), session: { connected: false, startedAt: null, upload: 0, download: 0, upSpeed: 0, downSpeed: 0, connections: 0 }, logs: [], environment: { desktop: false, admin: false, coreReady: false, version: '0.6.2' }, busy: false };
 // Browser preview is intentionally ephemeral: no credentials in localStorage.
 export const bridge = globalThis.window?.supervpn || {
   onUpdate: () => () => {},
@@ -32,6 +33,8 @@ export const bridge = globalThis.window?.supervpn || {
       if (p.mixedPort !== undefined && (!Number.isInteger(p.mixedPort) || p.mixedPort < 1024 || p.mixedPort > 65535 || p.mixedPort === 19090)) throw new Error('请输入有效端口，不能使用控制端口 19090');
       preview.settings = { ...preview.settings, ...p };
     }
+    if (method === 'setWebsiteRule') preview = setWebsiteRule(preview, p);
+    if (method === 'deleteWebsiteRule') preview = removeWebsiteRule(preview, p);
     if (method === 'addRule') {
       if (!/^[^\\/:*?"<>|\r\n]+\.exe$/i.test(p.process)) throw new Error('请输入有效的 .exe 程序名');
       preview.rules.push({ ...p, id: crypto.randomUUID(), enabled: true });

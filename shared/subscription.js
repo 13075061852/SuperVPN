@@ -1,4 +1,5 @@
 import { parseLink } from './proxy.js';
+import { clashSubscriptionEntries } from './clash-subscription.js';
 import { isInformationName } from './node-manager.js';
 export function isSubscriptionUrl(text) {
   try { const u = new URL(text.trim()); return ['https:', 'http:'].includes(u.protocol) && ((u.pathname && u.pathname !== '/') || !!u.search); } catch { return false; }
@@ -10,21 +11,24 @@ export function parseSubscription(text) {
     try { body = new TextDecoder('utf-8', { fatal: true }).decode(Uint8Array.from(atob(body.replace(/\s/g, '').replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0))); }
     catch { throw new Error('订阅 Base64 编码无效'); }
   }
-  if (/^\s*(proxies:|\{|\[|<!doctype|<html)/i.test(body)) throw new Error('暂支持 Base64 / 明文节点订阅，不支持 Clash YAML、JSON 或网页');
-  const lines = body.split(/\r?\n/).map(s => s.trim()).filter(s => s && !s.startsWith('#'));
+  const isClash = /^\s*proxies\s*:/m.test(body);
+  if (!isClash && /^\s*(\{|\[|<!doctype|<html)/i.test(body)) throw new Error('暂不支持 JSON 或网页订阅');
+  const lines = isClash ? clashSubscriptionEntries(body) : body.split(/\r?\n/).map(s => s.trim()).filter(s => s && !s.startsWith('#')).map(line => ({ line }));
   if (!lines.length || lines.length > 2000) throw new Error('订阅为空或超过 2000 个节点');
   const nodes = [], failures = {}, unsupported = [], information = [];
-  for (const line of lines) {
+  for (const entry of lines) {
+    const line = entry.line;
     try {
+      if (entry.error) throw new Error(entry.error);
       const node = parseLink(line);
       if (isInformationName(node.name)) { const { id, name, protocol } = node; information.push({ id, name, protocol }); }
       else nodes.push(node);
     }
     catch (e) {
-      const protocol = line.match(/^([a-z0-9]+):\/\//i)?.[1]?.toUpperCase() || '未知格式';
+      const protocol = entry.protocol || line.match(/^([a-z0-9]+):\/\//i)?.[1]?.toUpperCase() || '未知格式';
       const reason = e.message.includes('ECH') ? 'ECH 扩展不兼容' : e.message.startsWith('支持') ? '暂未支持' : '参数不兼容';
       const key = `${protocol}：${reason}`; failures[key] = (failures[key] || 0) + 1;
-      let name = `${protocol} 节点`;
+      let name = entry.name || `${protocol} 节点`;
       try { name = decodeURIComponent(line.split('#').slice(1).join('#')) || name; } catch { /* Never retain the raw credential-bearing link. */ }
       unsupported.push({ id: globalThis.crypto.randomUUID(), name: name.slice(0, 200), protocol, reason });
     }

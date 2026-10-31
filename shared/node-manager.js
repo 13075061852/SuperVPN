@@ -10,6 +10,15 @@ export function normalizeNodeState(state) {
     selectedNodeId: nodes.some(n => n.id === state.selectedNodeId) ? state.selectedNodeId : nodes[0]?.id || null
   };
 }
+export function subscriptionInUse(state, session, subscriptionId) {
+  if (!session?.connected || !subscriptionId) return false;
+  if (session.subscriptionId) return session.subscriptionId === subscriptionId;
+  const active = state.nodes.find(n => n.id === (session.nodeId || state.selectedNodeId));
+  return active?.subscriptionId === subscriptionId;
+}
+export function assertSubscriptionWritable(state, session, subscriptionId) {
+  if (subscriptionInUse(state, session, subscriptionId)) throw new Error('此订阅正在用于当前连接，请先断开再更新；新增或更新其他订阅无需断开');
+}
 export function replaceSubscription(state, parsed, subscription) {
   const id = subscription.id;
   const previous = state.nodes.find(n => n.id === state.selectedNodeId);

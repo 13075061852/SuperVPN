@@ -1,3 +1,4 @@
+import { websiteRuleList } from './website-rules.js';
 const decode = (s) => { try { return decodeURIComponent(s); } catch { throw new Error('链接包含无效的编码'); } };
 const unbase64 = (s) => { try { return new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0))); } catch { throw new Error('无效的 Base64 认证信息'); } };
 
@@ -120,6 +121,10 @@ export function createConfig(state, { controllerSecret = '', controllerPort = 19
   ];
   const outboundMode = state.settings.outboundMode || 'rule';
   if (!['rule', 'global', 'direct'].includes(outboundMode)) throw new Error('无效的出站模式');
+  const websites = websiteRuleList(state).filter(rule => rule.enabled !== false);
+  for (const rule of websites) {
+    rules.push(rule.action === 'reject' ? { clash_mode: 'Rule', domain_suffix: [rule.domain], action: 'reject' } : { clash_mode: 'Rule', domain_suffix: [rule.domain], action: 'route', outbound: rule.action });
+  }
   for (const rule of state.rules.filter(r => r.enabled)) {
     if (!/^[^\\/:*?"<>|\r\n]+\.exe$/i.test(rule.process)) throw new Error('程序名称必须是有效的 .exe 文件名');
     if (!['proxy', 'direct', 'reject'].includes(rule.action)) throw new Error('无效的分流动作');
@@ -132,7 +137,7 @@ export function createConfig(state, { controllerSecret = '', controllerPort = 19
     : { type: 'mixed', tag: 'mixed-in', listen: '127.0.0.1', listen_port: port };
   return {
     log: { level: 'info', timestamp: true },
-    dns: { servers: [{ type: 'udp', tag: 'bootstrap', server: '223.5.5.5' }, { type: 'https', tag: 'remote', server: '1.1.1.1', path: '/dns-query', detour: 'proxy' }], rules: [{ clash_mode: 'Direct', server: 'bootstrap' }], final: 'remote', strategy: 'prefer_ipv4' },
+    dns: { servers: [{ type: 'udp', tag: 'bootstrap', server: '223.5.5.5' }, { type: 'https', tag: 'remote', server: '1.1.1.1', path: '/dns-query', detour: 'proxy' }], rules: [{ clash_mode: 'Direct', server: 'bootstrap' }, ...websites.filter(rule => rule.action !== 'reject').map(rule => ({ clash_mode: 'Rule', domain_suffix: [rule.domain], server: rule.action === 'direct' ? 'bootstrap' : 'remote' }))], final: 'remote', strategy: 'prefer_ipv4' },
     inbounds: [inbound],
     outbounds: [{ ...effectiveOutbound(state, node), tag: 'proxy' }, { type: 'direct', tag: 'direct' }],
     route: { rules, auto_detect_interface: true, default_domain_resolver: 'bootstrap', final: state.settings.defaultAction === 'direct' ? 'direct' : 'proxy' },
@@ -141,6 +146,6 @@ export function createConfig(state, { controllerSecret = '', controllerPort = 19
 }
 
 export const defaultState = () => ({
-  nodes: [], subscriptions: [], unsupportedNodes: [], informationNodes: [], nodeChecks: {}, selectedNodeId: null, mode: 'system', rules: [],
+  nodes: [], subscriptions: [], unsupportedNodes: [], informationNodes: [], nodeChecks: {}, selectedNodeId: null, mode: 'system', rules: [], websiteRules: [],
   settings: { mixedPort: 17890, bypassLan: true, defaultAction: 'proxy', outboundMode: 'rule', honorImportedInsecure: true, autoStart: false, silentStart: false, closeToTray: true }
 });

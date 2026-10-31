@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { MonitorCog, Search } from 'lucide-react';
 import { bridge } from './bridge';
 import { programView } from './program-presentation.js';
-export default function ProgramRouting({ data, busy, onAction }) {
+export default function ProgramRouting({ data, busy, onAction, embedded = false }) {
   const [result, setResult] = useState(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [query, setQuery] = useState(''), [filter, setFilter] = useState('all');
   const supported = data.environment.programDiscovery === true;
   const locked = busy || data.session.connected;
@@ -17,7 +17,7 @@ export default function ProgramRouting({ data, busy, onAction }) {
   const { rows, counts } = programView({ programs: result?.programs || [], rules: data.rules, query, filter });
   const editHint = data.session.connected ? '请先断开连接再修改分流规则' : '同名 exe 共用规则，修改后下次连接生效';
   return <div className="program-routing">
-    <header className="page-header"><h1>分流控制</h1></header>
+    {!embedded && <header className="page-header"><h1>分流控制</h1></header>}
     {!supported && <p className="routing-notice">{data.environment.desktop ? '程序自动识别将在正常退出并重新启动后可用。' : '系统程序识别仅在 Windows 桌面端可用。'}</p>}
     <div className="program-tools">
       <label className="program-search"><Search size={16} aria-hidden="true"/><input aria-label="搜索系统程序" placeholder="搜索程序或 .exe" value={query} onChange={e => setQuery(e.target.value)}/></label>

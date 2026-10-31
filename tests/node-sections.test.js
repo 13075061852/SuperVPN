@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { nodeSections } from '../src/node-sections.js';
+import fs from 'node:fs/promises';
 function fixture() { return {
   subscriptions: [{ id: 'sub-first', name: '订阅甲' }, { id: 'sub-second', name: '订阅乙' }],
   nodes: [{ id: 'slow', subscriptionId: 'sub-first' }, { id: 'manual' }, { id: 'fast', subscriptionId: 'sub-second' }, { id: 'faster', subscriptionId: 'sub-first' }],
@@ -23,6 +24,11 @@ test('source filtering and hide-unavailable preserve source identities, total co
   assert.equal(sections[1].total, 1); assert.equal(sections[1].nodes.length, 0);
   const scoped = nodeSections(data, data.nodes.filter(node => node.subscriptionId === 'sub-first'));
   assert.equal(scoped.length, 1); assert.equal(scoped[0].id, 'sub-first');
+});
+test('node cards align with the heading without stacked left padding and retain card spacing', async () => {
+  const css = await fs.readFile('src/styles.css', 'utf8');
+  assert.match(css, /\.node-source-sections\s*\{[^}]*padding: 0 3px 3px 0;/);
+  assert.match(css, /\.node-card-grid\s*\{[^}]*gap: var\(--module-gap\);[^}]*padding: 3px 3px 3px 0;[^}]*border: 0;/);
 });
 test('orphaned subscription records do not silently join manual nodes or other subscriptions', () => {
   const data = fixture(); data.nodes.push({ id: 'orphan', subscriptionId: 'missing' });

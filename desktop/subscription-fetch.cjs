@@ -1,8 +1,13 @@
-// Electron's Chromium network stack honors the active Windows system proxy.
-// Node fetch can retain terminal launch-time proxy settings and use a different
-// network path from the running desktop client. Keep tests/CLI injectable.
+// Chromium networking honors Windows proxy settings. The subscription-only
+// session permits user-authorized unknown authorities without weakening any
+// website, speed-test or update HTTPS session. Keep tests/CLI injectable.
+const { createSubscriptionRequest } = require('./subscription-tls.cjs');
+let subscriptionRequest;
 function desktopFetch(input, options) {
-  if (process.versions.electron) return require('electron').net.fetch(input.toString(), options);
+  if (process.versions.electron) {
+    subscriptionRequest ||= createSubscriptionRequest(require('electron').session);
+    return subscriptionRequest(input, options);
+  }
   return globalThis.fetch(input, options);
 }
 exports.fetchSubscription = async (input, { requestFetch = desktopFetch } = {}) => {
@@ -46,7 +51,7 @@ exports.fetchSubscription = async (input, { requestFetch = desktopFetch } = {}) 
     if (/^订阅|^拒绝/.test(e.message)) throw e;
     const code = String(e.cause?.code || e.code || e.message || '');
     if (abort.signal.aborted || /TIMED?OUT|TIMEOUT|AbortError/i.test(code)) throw new Error('订阅获取超时，请稍后重试');
-    if (/CERT|SSL|TLS/i.test(code)) throw new Error('订阅 HTTPS 证书校验失败，未跳过验证');
+    if (/CERT|SSL|TLS/i.test(code)) throw new Error('订阅 HTTPS 证书无效，请检查有效期及域名或 IP 是否匹配');
     if (/NAME_NOT_RESOLVED|ENOTFOUND|EAI_AGAIN/i.test(code)) throw new Error('订阅域名解析失败，请检查 DNS');
     if (/PROXY|TUNNEL|ECONNREFUSED/i.test(code)) throw new Error('订阅网络或代理连接失败，请检查当前代理');
     throw new Error('订阅获取失败，请检查网络或订阅有效期');

@@ -49,6 +49,16 @@ test('source management renders real subscription cards and separate independent
   assert.ok(html.includes('430.53 GB')); assert.equal(html.includes('200 GB'), false);
   for (const removed of ['source-connection', 'add-source-card', 'route-emblem', '流量接管模式']) assert.equal(html.includes(removed), false);
 });
+test('source cards hide reset times even when supplied while retaining remaining quota and expiry', () => {
+  const data = fixture();
+  data.informationNodes.push({ name: '套餐到期：2027-07-05', subscriptionId: 's-1' });
+  const html = render(data);
+  assert.equal(html.includes('重置'), false); assert.equal(html.includes('7 天'), false);
+  assert.ok(html.includes('剩余流量')); assert.ok(html.includes('430.53 GB'));
+  assert.ok(html.includes('<dt>到期</dt>')); assert.ok(html.includes('2027-07-05'));
+  data.informationNodes = [{ name: '距离下次重置剩余：7 天', subscriptionId: 's-1' }];
+  assert.equal(render(data).includes('source-facts'), false);
+});
 test('source cards do not render credential URLs or protocol authentication UUIDs', () => {
   const data = fixture(), html = render(data);
   assert.equal(html.includes('never-render'), false); assert.equal(html.includes('private.example'), false);

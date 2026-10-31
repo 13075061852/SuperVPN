@@ -46,7 +46,7 @@ jobs:
         run: npm test
       - name: Build interactive Windows installer
         if: steps.version.outputs.publish == 'true'
-        run: npm run dist
+        run: npm run dist:ci
       - name: Verify installer, updater metadata and packaged files
         if: steps.version.outputs.publish == 'true'
         run: node scripts/verify-release.mjs
