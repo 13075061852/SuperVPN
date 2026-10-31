@@ -1,0 +1,11 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { parseSubscription, isSubscriptionUrl } from '../shared/subscription.js';
+import { parseLink } from '../shared/proxy.js';
+const uuid = '11111111-2222-4333-8444-555555555555';
+test('subscription URL is not an HTTPS proxy', () => { assert.ok(isSubscriptionUrl('https://example.com/subscribe?token=test')); assert.equal(isSubscriptionUrl('https://proxy.example:8443'), false); assert.throws(() => parseLink('https://example.com/subscribe?token=test'), /订阅/); });
+test('plain subscription and UTF8 base64 subscription', () => { const body='socks5://127.0.0.1:1080#测试\nhttp://127.0.0.1:8080'; for (const value of [body, Buffer.from(body).toString('base64'), Buffer.from(body).toString('base64url')]) { const result=parseSubscription(value); assert.equal(result.nodes.length,2); assert.equal(result.nodes[0].name,'测试'); } });
+test('unsupported nodes do not discard valid nodes or expose credentials in diagnostics', () => { const result=parseSubscription(`anytls://secret@host:443?sni=example.com\nvmess://secret\nvless://${uuid}@host:443?security=tls&ech=https%3A%2F%2Fdns.example%2Bd.example`); assert.equal(result.nodes.length,1); assert.equal(result.skipped,2); assert.equal(JSON.stringify(result.failures).includes('secret'),false); assert.equal(result.failures['VLESS：ECH 扩展不兼容'],1); });
+test('insecure subscription flags never turn off certificate verification', () => { const node=parseLink('anytls://pass@host:443?sni=example.com&fp=chrome&allowInsecure=1&insecure=1'); assert.equal(node.insecureRequested,true); assert.equal(node.outbound.tls.insecure,undefined); assert.equal(node.outbound.tls.utls.fingerprint,'chrome'); });
+test('Hysteria2 alias, password and obfuscation', () => { const n=parseLink('hy2://pass@host:443?sni=example.com&obfs=salamander&obfs-password=key'); assert.equal(n.outbound.type,'hysteria2'); assert.equal(n.outbound.password,'pass'); assert.deepEqual(n.outbound.obfs,{type:'salamander',password:'key'}); });
+test('unknown documents, oversized input and invalid encoding rejected', () => { for (const value of ['proxies:\n  - type: ss','<html>hello</html>','{}','', 'a'.repeat(2097153)]) assert.throws(()=>parseSubscription(value)); });

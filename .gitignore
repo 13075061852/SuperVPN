@@ -1,0 +1,14 @@
+node_modules/
+dist/
+release/
+resources/core/*
+!resources/core/.gitkeep
+*.log
+.env*
+output/
+.pi/
+state.bin
+proxy-recovery.json
+*.pfx
+*.p12
+*.pem

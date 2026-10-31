@@ -1,0 +1,63 @@
+name: Build and publish Windows update
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: supervpn-windows-release
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Check version and existing release
+        id: version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Use a stable semantic version' }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/v$version" --silent 2>$null
+          if ($LASTEXITCODE -eq 0) { "publish=false" >> $env:GITHUB_OUTPUT } else { "publish=true" >> $env:GITHUB_OUTPUT }
+          exit 0
+      - name: Install dependencies
+        if: steps.version.outputs.publish == 'true'
+        run: npm ci
+      - name: Download and verify the pinned core
+        if: steps.version.outputs.publish == 'true'
+        run: npm run core:download
+      - name: Regenerate native icons
+        if: steps.version.outputs.publish == 'true'
+        run: npm run icons:build
+      - name: Test
+        if: steps.version.outputs.publish == 'true'
+        run: npm test
+      - name: Build interactive Windows installer
+        if: steps.version.outputs.publish == 'true'
+        run: npm run dist
+      - name: Verify installer, updater metadata and packaged files
+        if: steps.version.outputs.publish == 'true'
+        run: node scripts/verify-release.mjs
+      - name: Include corresponding unmodified core source
+        if: steps.version.outputs.publish == 'true'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest 'https://github.com/SagerNet/sing-box/archive/refs/tags/v1.12.14.tar.gz' -OutFile 'release/sing-box-1.12.14-source.tar.gz'
+      - name: Publish release and automatic-update files
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          gh release create "v$version" "release/SuperVPN-Setup-$version.exe" "release/SuperVPN-Setup-$version.exe.blockmap" 'release/latest.yml' 'release/sing-box-1.12.14-source.tar.gz' --title "SuperVPN $version" --generate-notes --latest --target "$env:GITHUB_SHA"
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
