@@ -17,7 +17,13 @@ test('real sing-box validates configurations and forwards through a local HTTP u
   let process, logs = '', reached = false;
   const sockets = new Set();
   const upstream = http.createServer();
-  upstream.on('connection', s => { sockets.add(s); s.on('close', () => sockets.delete(s)); });
+  upstream.on('connection', s => {
+    sockets.add(s);
+    // A CONNECT peer can reset its socket during core teardown on Windows.
+    // Request/response assertions below still validate successful forwarding.
+    s.on('error', () => s.destroy());
+    s.on('close', () => sockets.delete(s));
+  });
   upstream.on('connect', (req, socket, head) => {
     reached = true;
     socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
