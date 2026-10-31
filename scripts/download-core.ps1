@@ -27,7 +27,9 @@ try {
   if (!$Exe) { throw 'Archive contains no sing-box.exe.' }
   Copy-Item $Exe.FullName (Join-Path $Destination 'sing-box.exe') -Force
   Invoke-WebRequest 'https://raw.githubusercontent.com/SagerNet/sing-box/v1.12.14/LICENSE' -OutFile (Join-Path $Destination 'LICENSE-sing-box') -UseBasicParsing
-  Invoke-WebRequest 'https://www.gnu.org/licenses/gpl-3.0.txt' -OutFile (Join-Path $Destination 'LICENSE-GPL-3.0.txt') -UseBasicParsing
+  # Keep the complete bundled GPL text; GNU's site can be unreachable from
+  # hosted Windows runners. Never omit a license just to finish a release.
+  if (!(Test-Path -LiteralPath (Join-Path $Destination 'LICENSE-GPL-3.0.txt'))) { throw 'Missing bundled LICENSE-GPL-3.0.txt; restore it from this repository before packaging.' }
   [IO.File]::WriteAllText((Join-Path $Destination 'LICENSE-source.txt'), "Corresponding source: https://github.com/SagerNet/sing-box/archive/refs/tags/v$Version.tar.gz`r`nUnmodified official sing-box v$Version binary. License: GPL-3.0-or-later.`r`n")
   [IO.File]::WriteAllText((Join-Path $Destination 'version.txt'), $Version)
   Write-Host "Installed and verified: $Destination"

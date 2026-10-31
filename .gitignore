@@ -3,6 +3,7 @@ dist/
 release/
 resources/core/*
 !resources/core/.gitkeep
+!resources/core/LICENSE*
 *.log
 .env*
 output/

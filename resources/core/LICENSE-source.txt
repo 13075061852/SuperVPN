@@ -1,0 +1,1 @@
+Corresponding source: https://github.com/SagerNet/sing-box/archive/refs/tags/v1.12.14.tar.gz. Unmodified official sing-box v1.12.14 binary. License: GPL-3.0-or-later.
