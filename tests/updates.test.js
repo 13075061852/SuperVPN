@@ -111,6 +111,14 @@ before(async () => {
   ({ UpdateSidebar, UpdateNotice } = await vite.ssrLoadModule('/src/Updates.jsx'));
 });
 after(async () => { await vite?.close(); if (cache) await fs.rm(cache, { recursive: true, force: true }); });
+test('idle sidebar shows only check-update text without version or status introduction', () => {
+  for (const phase of ['idle', 'current', 'error', 'development']) {
+    const data = { environment: { version: '0.6.3' }, updateInfo: { supported: phase !== 'development', phase, currentVersion: '0.6.3', error: '更新未完成' } };
+    const html = renderToStaticMarkup(React.createElement(UpdateSidebar, { data, busy: false, onAction: () => {} }));
+    assert.ok(html.includes('检查更新'));
+    for (const text of ['已是最新版本', '当前版本', '0.6.3', '更新未完成', '安装版支持自动更新', '<strong', '<small']) assert.equal(html.includes(text), false);
+  }
+});
 test('update UI shows real download progress and waits for a labeled installation confirmation', () => {
   const calls = [], data = { environment: { version: '0.6.0' }, updateInfo: { supported: true, phase: 'downloading', version: '0.6.1', percent: 37 } };
   const render = Component => renderToStaticMarkup(React.createElement(Component, { data, busy: false, onAction: (...args) => calls.push(args) }));
