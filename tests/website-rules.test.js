@@ -101,6 +101,9 @@ test('website UI exposes separate routing tabs and disables editing while connec
   const render = Component => renderToStaticMarkup(React.createElement(Component, { data, busy: false, onAction: () => {} }));
   let html = render(Routing); assert.ok(html.includes('分流类型')); assert.ok(html.includes('网站')); assert.ok(html.includes('程序')); assert.ok(html.includes('网站优先于程序规则'));
   assert.ok(html.includes('example.com 网站规则')); assert.ok(html.includes('删除 example.com')); assert.doesNotMatch(html, /<select[^>]*disabled/);
-  data.session.connected = true; html = render(WebsiteRouting); assert.ok(html.includes('断开后可编辑')); assert.match(html, /<select[^>]*disabled/);
+  data.session.connected = true; data.environment.websiteOpening = true; html = render(WebsiteRouting); assert.ok(html.includes('断开后可编辑')); assert.match(html, /<select[^>]*disabled/);
+  assert.match(html, /<button type="button" class="icon-button" aria-label="在默认浏览器打开 example.com" title="在默认浏览器打开 https:\/\/example.com\/">/);
+  data.environment.websiteOpening = false; html = render(WebsiteRouting);
+  assert.match(html, /aria-label="在默认浏览器打开 example.com"[^>]*disabled/);
   data.session.connected = false; data.environment.websiteRouting = false; html = render(WebsiteRouting); assert.ok(html.includes('下次正常启动')); assert.match(html, /<input[^>]*disabled/);
 });

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, ExternalLink } from 'lucide-react';
 import { normalizeDomain } from '../shared/website-rules.js';
 export default function WebsiteRouting({ data, busy, onAction }) {
   const [domain, setDomain] = useState(''), [action, setAction] = useState('proxy'), [error, setError] = useState('');
@@ -28,6 +28,7 @@ export default function WebsiteRouting({ data, busy, onAction }) {
         <button className={`toggle ${rule.enabled !== false ? 'on' : ''}`} role="switch" aria-label={`启用 ${rule.domain} 网站规则`} aria-checked={rule.enabled !== false} disabled={locked} title={hint} onClick={() => onAction('setWebsiteRule', { domain: rule.domain, action: rule.action, enabled: rule.enabled === false })}><span/></button>
         <strong title={rule.domain}>{rule.domain}</strong>
         <select className="program-rule" data-action={rule.action} aria-label={`${rule.domain} 网站规则`} title={hint} disabled={locked} value={rule.action} onChange={e => onAction('setWebsiteRule', { domain: rule.domain, action: e.target.value })}><option value="proxy">代理</option><option value="direct">直连</option><option value="reject">拦截</option></select>
+        <button type="button" className="icon-button" aria-label={`在默认浏览器打开 ${rule.domain}`} title={data.environment.websiteOpening ? `在默认浏览器打开 https://${rule.domain}/` : data.environment.desktop ? '下次正常启动后可用' : '请在桌面客户端中使用默认浏览器打开'} disabled={busy || !data.environment.websiteOpening} onClick={() => onAction('openWebsite', rule.id)}><ExternalLink size={15} aria-hidden="true"/></button>
         <button className="icon-button danger" aria-label={`删除 ${rule.domain} 网站规则`} title={hint} disabled={locked} onClick={() => onAction('deleteWebsiteRule', rule.id)}><Trash2 size={15} aria-hidden="true"/></button>
       </div>)}
       {!rules.length && <div className="empty-state"><p>还没有网站规则</p></div>}

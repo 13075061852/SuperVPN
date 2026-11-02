@@ -281,7 +281,13 @@ main { flex: 1; width: 100%; max-width: 1200px; min-width: 0; min-height: 0; mar
 .update-banner strong { display: block; font-size: 12px; font-weight: 500; }
 .update-banner span { display: block; margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .update-banner-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
-.update-settings .setting-row { border: 0; }
+.sidebar-update { margin-top: auto; min-width: 0; flex-shrink: 0; -webkit-app-region: no-drag; }
+.sidebar-update-status { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+.sidebar-update-status > div { min-width: 0; padding: 0 4px; }
+.sidebar-update-status strong { display: block; font-size: 11px; font-weight: 500; line-height: 1.5; overflow-wrap: anywhere; }
+.sidebar-update-status small { display: block; margin-top: 3px; font-size: 10px; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
+.sidebar-update-status .button { width: 100%; min-height: 32px; padding: 6px; font-size: 12px; }
+.sidebar-update .update-progress { gap: 6px; padding: 4px 4px 0; }
 .update-progress { display: flex; align-items: center; gap: 12px; padding-bottom: 14px; color: var(--muted); font-size: 11px; }
 .update-progress progress { flex: 1; width: 0; height: 6px; accent-color: var(--accent); }
 .settings-section > h3 { font-size: 12px; font-weight: 600; color: var(--accent); margin-bottom: 2px; }

@@ -11,6 +11,11 @@ export function normalizeDomain(value) {
   if (url.username || url.password || url.port || domain.length > 253 || /^[\d.]+$/.test(domain) || domain.includes(':') || !domain.split('.').every(label => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) throw new Error('请输入有效域名，不支持 IP 地址、端口或通配路径');
   return domain;
 }
+export function websiteRuleUrl(state, id) {
+  const rule = (state.websiteRules || []).find(item => item.id === id);
+  if (!rule) throw new Error('网站规则不存在');
+  return `https://${normalizeDomain(rule.domain)}/`;
+}
 export function websiteRuleList(state) {
   const source = state.websiteRules || [];
   if (!Array.isArray(source) || source.length > 1000) throw new Error('网站规则最多 1000 条');

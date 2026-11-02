@@ -3,12 +3,14 @@ import { isSubscriptionUrl } from '../shared/subscription.js';
 import { editNode } from '../shared/source-edits.js';
 import { validateSystemMode } from '../shared/connection-mode.js';
 import { setWebsiteRule, removeWebsiteRule } from '../shared/website-rules.js';
-let preview = { ...defaultState(), session: { connected: false, startedAt: null, upload: 0, download: 0, upSpeed: 0, downSpeed: 0, connections: 0 }, logs: [], environment: { desktop: false, admin: false, coreReady: false, version: '0.6.2' }, busy: false };
+import { seedDomesticWebsiteRules } from '../shared/default-website-rules.js';
+let preview = { ...seedDomesticWebsiteRules(defaultState()), session: { connected: false, startedAt: null, upload: 0, download: 0, upSpeed: 0, downSpeed: 0, connections: 0 }, logs: [], environment: { desktop: false, admin: false, coreReady: false, version: '0.6.3' }, busy: false };
 // Browser preview is intentionally ephemeral: no credentials in localStorage.
 export const bridge = globalThis.window?.supervpn || {
   onUpdate: () => () => {},
   async call(method, p) {
     if (['checkForUpdates', 'installUpdate'].includes(method)) throw new Error('自动更新仅在安装版可用');
+    if (method === 'openWebsite') throw new Error('请在 Windows 桌面客户端中使用默认浏览器打开网站');
     if (method === 'terminalProxy') throw new Error('终端环境变量仅在 Windows 桌面客户端中可设置');
     if (method === 'connect') throw new Error('当前是界面预览，不能接管网络。请运行 Windows 桌面客户端进行连接');
     if (method === 'disconnect') return structuredClone(preview);

@@ -1,6 +1,6 @@
 // Public release metadata and SHA-512 validation are handled by electron-updater.
 // Never accept a feed URL, token, installer path, or release HTML from IPC.
-function createUpdateService({ updater, enabled, currentVersion, onUpdate = () => {}, prepareInstall = async () => {}, validateInstaller = async () => {}, beginInstall, initialDelayMs = 15000, intervalMs = 4 * 60 * 60 * 1000 }) {
+function createUpdateService({ updater, enabled, currentVersion, onUpdate = () => {}, prepareInstall = async () => {}, validateInstaller = async () => {}, beginInstall, initialDelayMs = 0, intervalMs = 60 * 1000 }) {
   let state = { supported: !!enabled, currentVersion, phase: enabled ? 'idle' : 'development', version: null, percent: 0, transferred: 0, total: 0, error: null };
   let checking, installing, downloadedInfo, initialTimer, intervalTimer, disposed = false, lastProgress = 0;
   const listeners = [];

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, safeStorage, screen, session: electronSession } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, safeStorage, screen, shell, session: electronSession } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { spawn, execFile } = require('node:child_process');
@@ -38,7 +38,7 @@ const dataPath = (name) => path.join(app.getPath('userData'), name);
 const corePath = () => path.join(app.isPackaged ? process.resourcesPath : app.getAppPath() + '/resources', 'core', 'sing-box.exe');
 const errorText = e => e.message || String(e);
 function log(message, level = 'info') { logs = [...logs.slice(-199), { time: new Date().toISOString(), level, message }]; broadcast(); }
-function view() { const { terminalProxyBackup, ...publicState } = state; return { ...publicState, windowState: windowState(window), terminalProxy: terminalProxyView(terminalProxyBackup, state.settings.mixedPort), subscriptions: (state.subscriptions || []).map(({ url, ...sub }) => ({ ...sub, allowInsecure: sub.certificatePolicy !== 'strict' && (sub.allowInsecure === true || state.settings.honorImportedInsecure !== false), legacyNodeIds: nodeManager.legacyCandidateIds(state, { url }) })), importReport, testProgress, speedTest, updateInfo: updateService?.view() || { supported: false, phase: 'development', currentVersion: app.getVersion() }, nodes: state.nodes.map(({ outbound, ...n }) => ({ ...n, tlsInsecureAllowed: api.tlsCompatibilityAllowed(state, n) })), session, logs, environment: { desktop: true, programDiscovery: true, speedTesting: true, websiteRouting: true, admin, coreReady: !!global.coreReady, version: app.getVersion(), packaged: app.isPackaged, development: !app.isPackaged }, busy }; }
+function view() { const { terminalProxyBackup, ...publicState } = state; return { ...publicState, windowState: windowState(window), terminalProxy: terminalProxyView(terminalProxyBackup, state.settings.mixedPort), subscriptions: (state.subscriptions || []).map(({ url, ...sub }) => ({ ...sub, allowInsecure: sub.certificatePolicy !== 'strict' && (sub.allowInsecure === true || state.settings.honorImportedInsecure !== false), legacyNodeIds: nodeManager.legacyCandidateIds(state, { url }) })), importReport, testProgress, speedTest, updateInfo: updateService?.view() || { supported: false, phase: 'development', currentVersion: app.getVersion() }, nodes: state.nodes.map(({ outbound, ...n }) => ({ ...n, tlsInsecureAllowed: api.tlsCompatibilityAllowed(state, n) })), session, logs, environment: { desktop: true, programDiscovery: true, speedTesting: true, websiteRouting: true, websiteOpening: true, admin, coreReady: !!global.coreReady, version: app.getVersion(), packaged: app.isPackaged, development: !app.isPackaged }, busy }; }
 function broadcast() { if (window && !window.isDestroyed()) window.webContents.send('update', view()); }
 function broadcastTests() {
   if (testUpdateTimer) return;
@@ -170,6 +170,11 @@ async function handle(method, payload) {
   }
   if (method === 'alwaysOnTop') {
     try { setAlwaysOnTop(window, payload); } finally { broadcast(); }
+    return view();
+  }
+  if (method === 'openWebsite') {
+    const url = websiteRules.websiteRuleUrl(state, payload);
+    try { await shell.openExternal(url); } catch { throw new Error('无法打开默认浏览器，请检查系统浏览器设置'); }
     return view();
   }
   if (method === 'networkInfo') {
@@ -406,6 +411,9 @@ else {
     try { state = { ...state, ...JSON.parse(safeStorage.decryptString(await fs.readFile(dataPath('state.bin')))) }; }
     catch (e) { if (e.code !== 'ENOENT') throw new Error('本地配置无法解密或读取。为避免丢失节点，客户端未覆盖原文件'); }
     state = nodeManager.normalizeNodeState(state);
+    const { seedDomesticWebsiteRules } = await import(pathToFileURL(path.join(__dirname, '../shared/default-website-rules.js')).href);
+    const seeded = seedDomesticWebsiteRules(state);
+    if (seeded !== state) { state = seeded; await save(); }
     connectionMode = await import(pathToFileURL(path.join(__dirname, '../shared/connection-mode.js')).href);
     if (state.mode !== 'system') { state = connectionMode.systemProxyState(state); await save(); }
     if (state.settings.honorImportedInsecure === undefined) {

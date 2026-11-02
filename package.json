@@ -1,6 +1,6 @@
 {
   "name": "supervpn",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "private": true,
   "description": "A quiet, rule-based Windows proxy client powered by sing-box",
   "type": "module",

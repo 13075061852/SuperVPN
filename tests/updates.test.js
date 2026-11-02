@@ -1,6 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import vm from 'node:vm';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -63,6 +64,35 @@ test('startup and periodic checks stop cleanly when disposed', async () => {
   await new Promise(resolve => setTimeout(resolve, 55)); assert.ok(f.calls.length >= 2);
   f.service.dispose(); const count = f.calls.length; await new Promise(resolve => setTimeout(resolve, 25)); assert.equal(f.calls.length, count);
 });
+test('default scheduling checks immediately and every minute, without overlapping downloads or prompting installation automatically', async () => {
+  const timers = [], module = { exports: {} };
+  vm.runInNewContext(await fs.readFile('desktop/updates.cjs', 'utf8'), {
+    module, Date, Number, Promise,
+    setTimeout: (fn, ms) => { const timer = { fn, ms, type: 'timeout', unref() {} }; timers.push(timer); return timer; },
+    setInterval: (fn, ms) => { const timer = { fn, ms, type: 'interval', unref() {} }; timers.push(timer); return timer; },
+    clearTimeout() {}, clearInterval() {}
+  });
+  let checks = 0; const updater = new EventEmitter();
+  updater.checkForUpdates = async () => { checks++; updater.emit('update-not-available'); };
+  const service = module.exports.createUpdateService({ updater, enabled: true, currentVersion: '0.6.2' });
+  service.start(); service.start(); assert.equal(timers.length, 2);
+  assert.equal(timers[0].ms, 0); assert.equal(timers[1].ms, 60000);
+  timers[0].fn(); await service.check(); assert.equal(checks, 1);
+  timers[1].fn(); await service.check(); assert.equal(checks, 2);
+  updater.emit('update-available', { version: '0.6.3' });
+  timers[1].fn(); await service.check(); assert.equal(checks, 2);
+  updater.emit('update-downloaded', { version: '0.6.3' });
+  timers[1].fn(); await service.check(); assert.equal(checks, 2); assert.equal(service.view().phase, 'ready');
+  assert.equal(updater.autoInstallOnAppQuit, false); service.dispose();
+});
+test('sidebar owns update controls rather than settings and keeps the install prompt available', async () => {
+  const main = await fs.readFile('src/main.jsx', 'utf8');
+  assert.ok(main.includes('</nav><UpdateSidebar data={data} busy={busy} onAction={call}/></aside>'));
+  assert.equal(main.includes('UpdateSettings'), false);
+  assert.ok(main.includes('<UpdateNotice data={data} busy={busy} onAction={call}/>'));
+  const css = await fs.readFile('src/styles.css', 'utf8');
+  assert.match(css, /\.sidebar-update\s*\{[^}]*margin-top: auto;/);
+});
 test('waiting installer is revalidated against SHA-512 before any exit action', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'supervpn-update-hash-'));
   try {
@@ -74,19 +104,19 @@ test('waiting installer is revalidated against SHA-512 before any exit action', 
     await fs.unlink(downloadedFile); await assert.rejects(validateDownloadedInstaller(info));
   } finally { await fs.rm(dir, { recursive: true, force: true }); }
 });
-let vite, cache, UpdateSettings, UpdateNotice;
+let vite, cache, UpdateSidebar, UpdateNotice;
 before(async () => {
   cache = await fs.mkdtemp(path.join(os.tmpdir(), 'supervpn-update-ui-'));
   vite = await createServer({ configFile: false, cacheDir: cache, optimizeDeps: { noDiscovery: true, include: [] }, plugins: [react()], server: { middlewareMode: true, watch: null, hmr: false, ws: false }, appType: 'custom' });
-  ({ UpdateSettings, UpdateNotice } = await vite.ssrLoadModule('/src/Updates.jsx'));
+  ({ UpdateSidebar, UpdateNotice } = await vite.ssrLoadModule('/src/Updates.jsx'));
 });
 after(async () => { await vite?.close(); if (cache) await fs.rm(cache, { recursive: true, force: true }); });
 test('update UI shows real download progress and waits for a labeled installation confirmation', () => {
   const calls = [], data = { environment: { version: '0.6.0' }, updateInfo: { supported: true, phase: 'downloading', version: '0.6.1', percent: 37 } };
   const render = Component => renderToStaticMarkup(React.createElement(Component, { data, busy: false, onAction: (...args) => calls.push(args) }));
-  assert.ok(render(UpdateSettings).includes('value="37"')); assert.equal(render(UpdateNotice), ''); assert.deepEqual(calls, []);
+  assert.ok(render(UpdateSidebar).includes('value="37"')); assert.ok(render(UpdateSidebar).includes('每分钟自动检查')); assert.ok(render(UpdateSidebar).includes('sidebar-update')); assert.equal(render(UpdateNotice), ''); assert.deepEqual(calls, []);
   data.updateInfo.phase = 'ready'; assert.ok(render(UpdateNotice).includes('安装更新')); assert.ok(render(UpdateNotice).includes('稍后')); assert.ok(render(UpdateNotice).includes('退出软件'));
   function button(element) { if (element?.type === 'button') return element; for (const child of React.Children.toArray(element?.props?.children)) { const found = button(child); if (found) return found; } }
-  button(UpdateSettings({ data, busy: false, onAction: (...args) => calls.push(args) })).props.onClick(); assert.deepEqual(calls, [['installUpdate', { confirmed: true }]]);
-  data.updateInfo.supported = false; assert.equal(render(UpdateNotice), ''); assert.ok(render(UpdateSettings).includes('disabled'));
+  button(UpdateSidebar({ data, busy: false, onAction: (...args) => calls.push(args) })).props.onClick(); assert.deepEqual(calls, [['installUpdate', { confirmed: true }]]);
+  data.updateInfo.supported = false; assert.equal(render(UpdateNotice), ''); assert.ok(render(UpdateSidebar).includes('disabled'));
 });
