@@ -42,11 +42,16 @@ test('updating or replacing another subscription while connected leaves the acti
   assert.equal(f.context.state.subscriptions.find(s => s.id === 'other-source').name, 'Other renamed');
   assert.equal(JSON.stringify(createConfig(f.context.state)), before);
 });
-test('same-source reimport, refresh and URL replacement are blocked before fetching only for the active source', async () => {
-  const f = fixture();
-  await assert.rejects(f.run('https://current.example/sub', 'current'), /此订阅正在用于当前连接/);
-  await assert.rejects(f.run('https://replacement.example/sub', 'current'), /此订阅正在用于当前连接/);
-  assert.equal(f.context.state, f.state); assert.deepEqual(f.stats(), { fetches: 0, saves: 0 });
+test('active-source refresh and URL replacement save next-connection nodes without touching the live session', async () => {
+  const f = fixture(), originalSession = JSON.stringify(f.session), originalConfig = JSON.stringify(createConfig(f.state));
+  await f.run('https://current.example/sub', 'current');
+  await f.run('https://replacement.example/sub', 'current');
+  assert.equal(f.context.session, f.session); assert.equal(JSON.stringify(f.session), originalSession);
+  assert.equal(JSON.stringify(createConfig(f.state)), originalConfig);
+  assert.equal(f.context.state.nodes.some(n => n.id === 'active'), false);
+  assert.equal(f.context.state.nodes.find(n => n.id === f.context.state.selectedNodeId).host, 'new.example');
+  assert.equal(f.context.state.subscriptions.find(s => s.id === 'current').url, 'https://replacement.example/sub');
+  assert.deepEqual(f.stats(), { fetches: 2, saves: 2 });
   assert.equal(nodeManager.subscriptionInUse(f.state, { connected: true }, 'current'), true, 'legacy sessions fall back to selected node, not source tab');
   assert.equal(nodeManager.subscriptionInUse(f.state, { connected: false }, 'current'), false);
 });
@@ -62,9 +67,10 @@ test('save and download failures roll back without stopping the connection or pu
     assert.equal(f.context.state, f.state); assert.equal(f.context.importReport, null); assert.equal(f.context.session, f.session); assert.equal(f.session.connected, true);
   }
 });
-test('active source is rechecked after an asynchronous download and disconnected updates remain allowed', async () => {
-  const f = fixture({ fetch: context => { context.session = { ...context.session, subscriptionId: 'other-source', nodeId: 'other' }; return { body: 'http://new.example:9090', usage: null }; } });
-  await assert.rejects(f.run('https://other.example/sub', 'other-source'), /此订阅正在用于当前连接/); assert.equal(f.context.state, f.state); assert.equal(f.stats().saves, 0);
+test('a source removed during download is not resurrected and disconnected updates remain allowed', async () => {
+  const f = fixture({ fetch: context => { context.state = nodeManager.removeSubscription(context.state, 'other-source'); return { body: 'http://new.example:9090', usage: null }; } });
+  await assert.rejects(f.run('https://other.example/sub', 'other-source'), /订阅不存在/); assert.equal(f.stats().saves, 0);
+  assert.equal(f.context.state.subscriptions.some(s => s.id === 'other-source'), false);
   const disconnected = fixture(); disconnected.session.connected = false;
   await disconnected.run('https://current.example/sub', 'current'); assert.equal(disconnected.stats().saves, 1);
   const legacy = fixture({ manual: true }); legacy.session.connected = false;
@@ -77,14 +83,14 @@ before(async () => {
   Profiles = (await vite.ssrLoadModule('/src/Profiles.jsx')).default;
 });
 after(async () => { await vite?.close(); if (cache) await fs.rm(cache, { recursive: true, force: true }); });
-test('connected UI enables import and updates to other sources but disables active subscription update', () => {
+test('connected UI enables active and other subscription updates and removals on a capable backend', () => {
   const f = fixture();
-  const html = renderToStaticMarkup(React.createElement(Profiles, { data: { ...f.state, session: f.session }, busy: false, selectedGroup: 'other-source' }));
+  const html = renderToStaticMarkup(React.createElement(Profiles, { data: { ...f.state, session: f.session, environment: { connectedEditing: true } }, busy: false, selectedGroup: 'other-source' }));
   const updates = [...html.matchAll(/<button\b([^>]*)>(?:(?!<button)[\s\S])*?更新订阅<\/button>/g)].map(match => match[1]);
   // Match attributes on the exact update buttons, not preceding sibling buttons.
-  const locked = html.match(/<button disabled="" title="当前连接正在使用此订阅，断开后可更新"/);
-  const unlocked = html.match(/<button title="更新此订阅，不影响当前连接"/);
-  assert.ok(locked); assert.ok(unlocked); assert.equal(updates.length, 2);
+  assert.equal(updates.length, 2); assert.ok(updates.every(attributes => !attributes.includes('disabled')));
+  const removals = [...html.matchAll(/<button\b([^>]*)>(?:(?!<button)[\s\S])*?移除订阅<\/button>/g)].map(match => match[1]);
+  assert.equal(removals.length, 2); assert.ok(removals.every(attributes => !attributes.includes('disabled')));
   assert.match(html, /<button class="button primary">[\s\S]*?导入<\/button>/);
   assert.equal(nodeManager.subscriptionInUse(f.state, { ...f.session, nodeId: 'other', subscriptionId: 'other-source' }, 'current'), false);
 });

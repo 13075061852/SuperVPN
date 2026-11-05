@@ -2,11 +2,12 @@ import React, { useState } from 'react';
 import { Plus, Trash2, ExternalLink } from 'lucide-react';
 import { normalizeDomain } from '../shared/website-rules.js';
 export default function WebsiteRouting({ data, busy, onAction }) {
-  const [domain, setDomain] = useState(''), [action, setAction] = useState('proxy'), [error, setError] = useState('');
+  const [domain, setDomain] = useState(''), [action, setAction] = useState('direct'), [error, setError] = useState('');
   const supported = !data.environment.desktop || data.environment.websiteRouting === true;
-  const locked = busy || data.session.connected || !supported;
+  const legacyConnected = data.session.connected && data.environment.desktop && !data.environment.connectedEditing;
+  const locked = busy || legacyConnected || !supported;
   const rules = data.websiteRules || [];
-  const hint = !supported ? '网站规则接口下次正常启动后可用' : data.session.connected ? '请先断开连接再修改网站规则' : '域名及其子域名；更具体的域名优先，规则模式下生效';
+  const hint = !supported || legacyConnected ? '网站规则接口下次正常启动后可用' : '域名及其子域名；保存后下次连接生效';
   async function add(event) {
     event.preventDefault(); if (locked) return;
     try {
@@ -22,7 +23,7 @@ export default function WebsiteRouting({ data, busy, onAction }) {
       <button type="submit" className="button primary" disabled={locked || !domain.trim()} title={hint}><Plus size={14} aria-hidden="true"/>添加</button>
     </form>
     {error && <p className="form-error" role="alert">{error}</p>}
-    <p className="website-rule-hint">{!supported ? hint : data.session.connected ? '断开后可编辑，下次连接生效' : (data.settings.outboundMode || 'rule') !== 'rule' ? '切换到规则模式后生效' : '包含子域名 · 网站优先于程序规则'}</p>
+    <p className="website-rule-hint">{!supported || legacyConnected ? hint : data.session.connected ? '保存后下次连接生效' : (data.settings.outboundMode || 'rule') !== 'rule' ? '切换到规则模式后生效' : '包含子域名 · 网站优先于程序规则'}</p>
     <div className="website-rule-list" tabIndex={0} aria-label="已配置网站">
       {rules.map(rule => <div className="website-rule-row" key={rule.id}>
         <button className={`toggle ${rule.enabled !== false ? 'on' : ''}`} role="switch" aria-label={`启用 ${rule.domain} 网站规则`} aria-checked={rule.enabled !== false} disabled={locked} title={hint} onClick={() => onAction('setWebsiteRule', { domain: rule.domain, action: rule.action, enabled: rule.enabled === false })}><span/></button>

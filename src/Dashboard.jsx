@@ -27,7 +27,7 @@ export default function Dashboard({ data, busy, onAction, onSetting, onNavigate,
   }, [environment.desktop, session.connected, session.startedAt, data.mode, settings.outboundMode, settings.defaultAction, refresh]);
   const maximum = Math.max(1024, ...samples.map(p => Math.max(p.up, p.down)));
   const line = key => samples.map((p, i) => `${i ? 'L' : 'M'}${(i / 39 * 500).toFixed(1)},${(112 - p[key] / maximum * 92).toFixed(1)}`).join(' ');
-  const node = data.nodes.find(n => n.id === data.selectedNodeId);
+  const node = session.connected ? session.node || data.nodes.find(n => n.id === (session.nodeId || data.selectedNodeId)) : data.nodes.find(n => n.id === data.selectedNodeId);
   const proxyOn = session.connected && data.mode === 'system';
   async function toggleSystemProxy() {
     if (proxyOn) return onAction('disconnect');
@@ -40,6 +40,7 @@ export default function Dashboard({ data, busy, onAction, onSetting, onNavigate,
       <button className="current-node-button" title={node?.name || '导入线路'} onClick={() => node ? onNavigate('nodes') : onImport()}>{node?.name || '选择线路'}<ChevronRight size={14}/></button>
       {session.connected && <span className="session-time">{duration}</span>}
     </div></header>
+    {session.connected && data.reconnectRequired && <div className="reconnect-notice" role="status">设置已更改，需要重连后生效</div>}
     <section className="instrument-card dashboard-controls" aria-label="连接与出站控制">
       <div className="dashboard-proxy-control"><h2><Shuffle size={17} aria-hidden="true"/>系统代理</h2><button className={`toggle ${proxyOn ? 'on' : ''}`} role="switch" aria-checked={proxyOn} aria-label="系统代理" disabled={busy || (session.connected && data.mode !== 'system')} title={session.connected && data.mode !== 'system' ? '请先断开当前连接' : proxyOn ? '关闭系统代理并断开' : '连接并启用系统代理'} onClick={toggleSystemProxy}><span/></button></div>
       <div className="dashboard-outbound-control"><h2><Network size={17} aria-hidden="true"/>出站模式</h2><div className="outbound-choices" role="radiogroup" aria-label="出站模式">{[{ id: 'rule', name: '规则' }, { id: 'global', name: '全局' }, { id: 'direct', name: '直连' }].map(mode => <button key={mode.id} role="radio" aria-checked={(settings.outboundMode || 'rule') === mode.id} disabled={busy} title={session.connected ? '即时切换，对新连接生效' : mode.name} onClick={() => onSetting('outboundMode', mode.id)}><span className={`mode-radio ${(settings.outboundMode || 'rule') === mode.id ? 'checked' : ''}`}/>{mode.name}</button>)}</div></div>

@@ -45,6 +45,10 @@ test('program routing shows old rules even before discovery is available and loc
   assert.ok(html.includes('browser.exe')); assert.ok(html.includes('正常退出')); assert.equal(html.includes('routing-context'), false); assert.ok(html.includes('搜索系统程序'));
   assert.ok(html.match(/<select[^>]*aria-label="browser.exe 网络规则"[^>]*disabled/));
   assert.ok(html.includes('直连')); assert.ok(html.includes('拦截')); assert.ok(html.includes('跟随默认'));
+  data.environment.connectedEditing = true;
+  const editable = renderToStaticMarkup(React.createElement(ProgramRouting, { data, busy: false }));
+  assert.doesNotMatch(editable, /<select[^>]*disabled/); assert.ok(editable.includes('修改后下次连接生效'));
+  assert.match(renderToStaticMarkup(React.createElement(ProgramRouting, { data, busy: true })), /<select[^>]*disabled/);
 });
 test('program filters keep configured undetected apps and disabled rules, with stable case-insensitive identity', () => {
   const programs = [{ name: '浏览器', process: 'Browser.exe', running: true, paths: ['C:\\Browser.exe'] }, { name: '编辑器', process: 'edit.exe', running: false, paths: [] }];
@@ -71,6 +75,11 @@ test('routing UI has compact filters without a separate default path, header act
   assert.match(css, /\.program-routing\s*\{[^}]*height: 100%;[^}]*min-height: 0/);
   assert.match(css, /\.program-list\s*\{[^}]*min-height: 0;[^}]*overflow-y: auto/);
   assert.match(css, /\.program-table\s*\{[^}]*flex: 1;[^}]*min-height: 0/);
+});
+test('new program-rule form defaults to direct on initial render and each opening', async () => {
+  const main = await fs.readFile('src/main.jsx', 'utf8');
+  assert.ok(main.includes("[action, setAction] = useState('direct')"));
+  assert.match(main, /function openRule\(\) \{[^}]*setAction\('direct'\)/);
 });
 test('manual total is never guessed from plan names and only computes valid bounded remaining data', () => {
   assert.equal(manualProgress(null, '429.43 GB'), null);

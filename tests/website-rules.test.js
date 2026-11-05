@@ -96,12 +96,16 @@ before(async () => {
   WebsiteRouting = (await vite.ssrLoadModule('/src/WebsiteRouting.jsx')).default; Routing = (await vite.ssrLoadModule('/src/Routing.jsx')).default;
 });
 after(async () => { await vite?.close(); if (cache) await fs.rm(cache, { recursive: true, force: true }); });
-test('website UI exposes separate routing tabs and disables editing while connected or on an older backend', () => {
+test('website UI enables connected deferred editing and protects older backends', () => {
   const data = { ...defaultState(), session: { connected: false }, environment: { desktop: true, websiteRouting: true }, websiteRules: [{ id: 'web-1', domain: 'example.com', action: 'direct', enabled: true }] };
   const render = Component => renderToStaticMarkup(React.createElement(Component, { data, busy: false, onAction: () => {} }));
   let html = render(Routing); assert.ok(html.includes('分流类型')); assert.ok(html.includes('网站')); assert.ok(html.includes('程序')); assert.ok(html.includes('网站优先于程序规则'));
+  assert.match(html, /aria-label="新网站网络规则"[\s\S]*?<option value="direct" selected="">直连<\/option>/);
   assert.ok(html.includes('example.com 网站规则')); assert.ok(html.includes('删除 example.com')); assert.doesNotMatch(html, /<select[^>]*disabled/);
-  data.session.connected = true; data.environment.websiteOpening = true; html = render(WebsiteRouting); assert.ok(html.includes('断开后可编辑')); assert.match(html, /<select[^>]*disabled/);
+  data.session.connected = true; data.environment.websiteOpening = true; data.environment.connectedEditing = true; html = render(WebsiteRouting); assert.ok(html.includes('保存后下次连接生效')); assert.doesNotMatch(html, /<select[^>]*disabled/);
+  assert.doesNotMatch(html, /aria-label="删除 example.com 网站规则"[^>]*disabled/);
+  data.environment.connectedEditing = false; const legacy = render(WebsiteRouting); assert.ok(legacy.includes('下次正常启动')); assert.match(legacy, /<select[^>]*disabled/);
+  data.environment.connectedEditing = true;
   assert.match(html, /<button type="button" class="icon-button" aria-label="在默认浏览器打开 example.com" title="在默认浏览器打开 https:\/\/example.com\/">/);
   data.environment.websiteOpening = false; html = render(WebsiteRouting);
   assert.match(html, /aria-label="在默认浏览器打开 example.com"[^>]*disabled/);

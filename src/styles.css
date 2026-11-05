@@ -537,6 +537,7 @@ main, .dashboard-page, .profiles-main { max-width: none; margin: 0; padding: 16p
 }
 /* Dashboard: the same twelve-pixel grid for every information module. */
 .instrument-dashboard { gap: var(--module-gap); min-height: 100%; }
+.reconnect-notice { padding: 12px; border: 1px solid #daceef; border-radius: var(--component-radius); background: #f5f0ff; color: var(--accent); font-size: 12px; line-height: 1.5; flex-shrink: 0; }
 .instrument-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(160px, 1fr); gap: var(--module-gap); align-items: stretch; }
 .instrument-card { min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: var(--component-radius); background: #fff; }
 .instrument-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 22px; }

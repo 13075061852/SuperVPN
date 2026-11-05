@@ -5,7 +5,7 @@ import { programView } from './program-presentation.js';
 export default function ProgramRouting({ data, busy, onAction, embedded = false }) {
   const [result, setResult] = useState(null), [loading, setLoading] = useState(false), [error, setError] = useState(''), [query, setQuery] = useState(''), [filter, setFilter] = useState('all');
   const supported = data.environment.programDiscovery === true;
-  const locked = busy || data.session.connected;
+  const locked = busy || (data.session.connected && data.environment.desktop && !data.environment.connectedEditing);
   async function scan(refresh = false) {
     if (!supported || loading) return;
     setLoading(true); setError('');
@@ -15,7 +15,7 @@ export default function ProgramRouting({ data, busy, onAction, embedded = false 
   }
   useEffect(() => { scan(); }, [supported]);
   const { rows, counts } = programView({ programs: result?.programs || [], rules: data.rules, query, filter });
-  const editHint = data.session.connected ? '请先断开连接再修改分流规则' : '同名 exe 共用规则，修改后下次连接生效';
+  const editHint = locked && !busy ? '下次正常启动后支持连接中编辑' : '同名 exe 共用规则，修改后下次连接生效';
   return <div className="program-routing">
     {!embedded && <header className="page-header"><h1>分流控制</h1></header>}
     {!supported && <p className="routing-notice">{data.environment.desktop ? '程序自动识别将在正常退出并重新启动后可用。' : '系统程序识别仅在 Windows 桌面端可用。'}</p>}

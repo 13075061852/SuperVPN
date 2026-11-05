@@ -19,6 +19,7 @@ const { setProgramRule } = require('../desktop/program-rules.cjs');
 const { runSpeedTest } = require('../desktop/speed-test.cjs');
 const { createUpdateService } = require('../desktop/updates.cjs');
 const { validateDownloadedInstaller } = require('../desktop/update-integrity.cjs');
+const { createReconnectTracker } = require('../desktop/reconnect-required.cjs');
 let networkQueue = Promise.resolve(), updateService;
 // A source build must not silently hand its window to an older installed EXE.
 if (!app.isPackaged) {
@@ -31,6 +32,7 @@ const exec = promisify(execFile);
 let window, tray, state, api, child, runtimeFile, quitting = false, busy = false, admin = false;
 let session = { connected: false, startedAt: null, upload: 0, download: 0, upSpeed: 0, downSpeed: 0, connections: 0 }, logs = [];
 let secret = '', previousTotals = null, subscriptionApi, nodeManager, sourceEdits, connectionMode, websiteRules, importReport = null;
+const reconnectTracker = createReconnectTracker({ createConfig: state => api.createConfig(state) });
 let speedTest = { running: false }, speedAbort, speedPromise;
 let testProgress = { running: false, total: 0, completed: 0, concurrency: 0 }, testAbort, testPromise, testUpdateTimer;
 const controllerPort = 19090;
@@ -38,7 +40,7 @@ const dataPath = (name) => path.join(app.getPath('userData'), name);
 const corePath = () => path.join(app.isPackaged ? process.resourcesPath : app.getAppPath() + '/resources', 'core', 'sing-box.exe');
 const errorText = e => e.message || String(e);
 function log(message, level = 'info') { logs = [...logs.slice(-199), { time: new Date().toISOString(), level, message }]; broadcast(); }
-function view() { const { terminalProxyBackup, ...publicState } = state; return { ...publicState, windowState: windowState(window), terminalProxy: terminalProxyView(terminalProxyBackup, state.settings.mixedPort), subscriptions: (state.subscriptions || []).map(({ url, ...sub }) => ({ ...sub, allowInsecure: sub.certificatePolicy !== 'strict' && (sub.allowInsecure === true || state.settings.honorImportedInsecure !== false), legacyNodeIds: nodeManager.legacyCandidateIds(state, { url }) })), importReport, testProgress, speedTest, updateInfo: updateService?.view() || { supported: false, phase: 'development', currentVersion: app.getVersion() }, nodes: state.nodes.map(({ outbound, ...n }) => ({ ...n, tlsInsecureAllowed: api.tlsCompatibilityAllowed(state, n) })), session, logs, environment: { desktop: true, programDiscovery: true, speedTesting: true, websiteRouting: true, websiteOpening: true, admin, coreReady: !!global.coreReady, version: app.getVersion(), packaged: app.isPackaged, development: !app.isPackaged }, busy }; }
+function view() { const { terminalProxyBackup, ...publicState } = state; return { ...publicState, windowState: windowState(window), terminalProxy: terminalProxyView(terminalProxyBackup, state.settings.mixedPort), subscriptions: (state.subscriptions || []).map(({ url, ...sub }) => ({ ...sub, allowInsecure: sub.certificatePolicy !== 'strict' && (sub.allowInsecure === true || state.settings.honorImportedInsecure !== false), legacyNodeIds: nodeManager.legacyCandidateIds(state, { url }) })), importReport, testProgress, speedTest, updateInfo: updateService?.view() || { supported: false, phase: 'development', currentVersion: app.getVersion() }, nodes: state.nodes.map(({ outbound, ...n }) => ({ ...n, tlsInsecureAllowed: api.tlsCompatibilityAllowed(state, n) })), session, reconnectRequired: reconnectTracker.required(state, session.connected), logs, environment: { desktop: true, programDiscovery: true, speedTesting: true, websiteRouting: true, websiteOpening: true, connectedEditing: true, admin, coreReady: !!global.coreReady, version: app.getVersion(), packaged: app.isPackaged, development: !app.isPackaged }, busy }; }
 function broadcast() { if (window && !window.isDestroyed()) window.webContents.send('update', view()); }
 function broadcastTests() {
   if (testUpdateTimer) return;
@@ -66,6 +68,7 @@ async function applyProxy() {
 }
 async function removeRuntime() { if (runtimeFile) { await fs.rm(runtimeFile, { force: true }); runtimeFile = null; } }
 async function stop() {
+  reconnectTracker.stopped();
   session = { ...session, connected: false, startedAt: null, upSpeed: 0, downSpeed: 0, connections: 0 };
   const old = child; child = null;
   if (old) {
@@ -131,16 +134,17 @@ async function start() {
     if (child !== proc) throw new Error('内核已停止');
     if (state.mode === 'system') await applyProxy();
     const activeNode = state.nodes.find(n => n.id === state.selectedNodeId);
-    session = { connected: true, nodeId: activeNode.id, subscriptionId: activeNode.subscriptionId || null, startedAt: Date.now(), upload: 0, download: 0, upSpeed: 0, downSpeed: 0, connections: 0 };
+    reconnectTracker.started(config);
+    session = { connected: true, node: { id: activeNode.id, name: activeNode.name, host: activeNode.host, port: activeNode.port, protocol: activeNode.protocol, subscriptionId: activeNode.subscriptionId || null }, nodeId: activeNode.id, subscriptionId: activeNode.subscriptionId || null, startedAt: Date.now(), upload: 0, download: 0, upSpeed: 0, downSpeed: 0, connections: 0 };
     log('本地代理服务已启动。远端可用性取决于节点，请用实际网络请求验证');
   } catch (e) { await stop(); throw e; }
 }
 async function importSubscription(url, existingId, displayName) {
-  nodeManager.assertSubscriptionWritable(state, session, existingId);
+  if (existingId && !(state.subscriptions || []).some(s => s.id === existingId)) throw new Error('订阅不存在');
   const fetched = await fetchSubscription(url);
   const parsed = subscriptionApi.parseSubscription(fetched.body);
-  // Recheck after the asynchronous download against the actual current session.
-  nodeManager.assertSubscriptionWritable(state, session, existingId);
+  // Only saved state changes; the running core retains its startup configuration.
+  if (existingId && !(state.subscriptions || []).some(s => s.id === existingId)) throw new Error('订阅不存在');
   const id = existingId || randomBytes(8).toString('hex');
   const previousSource = (state.subscriptions || []).find(s => s.id === id && s.url === url);
   const sub = { id, url, certificatePolicy: previousSource?.certificatePolicy, name: displayName || (state.subscriptions || []).find(s => s.id === id)?.name || new URL(url).hostname, updatedAt: Date.now(), count: parsed.nodes.length, skipped: parsed.skipped, usage: fetched.usage, usageUpdatedAt: Date.now(), allowInsecure: (state.subscriptions || []).some(s => s.id === id && s.url === url && s.allowInsecure === true) };
@@ -149,7 +153,6 @@ async function importSubscription(url, existingId, displayName) {
   const next = nodeManager.replaceSubscription(state, parsed, sub);
   // An old HTTPS-proxy placeholder may itself be the active manual node.
   if (!session.connected && legacy.includes(next.selectedNodeId)) next.selectedNodeId = next.nodes.find(n => n.subscriptionId === id)?.id || null;
-  if (session.connected && next.selectedNodeId !== previous.selectedNodeId) throw new Error('此次导入会替换当前连接节点，请先断开连接');
   state = next;
   try { await save(); } catch (e) { state = previous; throw e; }
   importReport = { subscriptionId: id, imported: parsed.nodes.length, total: parsed.total, skipped: parsed.skipped, information: parsed.information?.length || 0, failures: parsed.failures, secureOverrides: parsed.secureOverrides };
@@ -158,7 +161,7 @@ async function importSubscription(url, existingId, displayName) {
 async function handle(method, payload) {
   if (method === 'checkForUpdates') {
     if (!updateService?.view().supported) throw new Error('自动更新仅在安装版可用');
-    void updateService.check();
+    void updateService.check(true);
     return view();
   }
   if (method === 'get') return view();
@@ -252,7 +255,6 @@ async function handle(method, payload) {
       if (!sub) throw new Error('订阅不存在');
       await importSubscription(sub.url, sub.id);
     } else if (method === 'deleteSubscription') {
-      if (session.connected) throw new Error('请先断开连接再移除订阅');
       if (!(state.subscriptions || []).some(s => s.id === payload)) throw new Error('订阅不存在');
       const previous = state;
       state = nodeManager.removeSubscription(state, payload);
@@ -318,7 +320,7 @@ async function handle(method, payload) {
       await save();
     } else if (method === 'selectNode') {
       if (!state.nodes.some(n => n.id === payload)) throw new Error('节点不存在');
-      if (state.selectedNodeId !== payload) {
+      if (state.selectedNodeId !== payload || (session.connected && session.nodeId && session.nodeId !== payload)) {
         const reconnect = session.connected;
         if (reconnect) await stop();
         state.selectedNodeId = payload; await save();
@@ -354,25 +356,23 @@ async function handle(method, payload) {
       app.setLoginItemSettings({ openAtLogin: next.autoStart, args: ['--autostart'] });
       state.settings = next; await save();
     } else if (method === 'setWebsiteRule' || method === 'deleteWebsiteRule') {
-      if (session.connected) throw new Error('请先断开连接再修改网站规则，下次连接生效');
       const previous = state;
       state = method === 'setWebsiteRule' ? websiteRules.setWebsiteRule(state, payload) : websiteRules.removeWebsiteRule(state, payload);
       try { await save(); } catch (error) { state = previous; throw error; }
     } else if (method === 'setProgramRule') {
-      if (session.connected) throw new Error('请先断开连接再修改分流规则');
       const previous = state;
       state = setProgramRule(state, payload);
       try { await save(); } catch (e) { state = previous; throw e; }
     } else if (method === 'addRule') {
-      if (session.connected) throw new Error('请先断开连接再修改分流规则');
       if (!/^[^\\/:*?"<>|\r\n]+\.exe$/i.test(payload?.process || '')) throw new Error('请输入有效的程序名，例如 chrome.exe');
       if (!['proxy', 'direct', 'reject'].includes(payload.action)) throw new Error('无效动作');
-      state.rules.push({ id: randomBytes(8).toString('hex'), process: payload.process, action: payload.action, enabled: true }); await save();
+      const previous = state;
+      state = { ...state, rules: [...state.rules, { id: randomBytes(8).toString('hex'), process: payload.process, action: payload.action, enabled: true }] };
+      try { await save(); } catch (error) { state = previous; throw error; }
     } else if (method === 'toggleRule' || method === 'deleteRule') {
-      if (session.connected) throw new Error('请先断开连接再修改分流规则');
-      if (method === 'toggleRule') state.rules = state.rules.map(r => r.id === payload ? { ...r, enabled: !r.enabled } : r);
-      else state.rules = state.rules.filter(r => r.id !== payload);
-      await save();
+      const previous = state;
+      state = { ...state, rules: method === 'toggleRule' ? state.rules.map(r => r.id === payload ? { ...r, enabled: !r.enabled } : r) : state.rules.filter(r => r.id !== payload) };
+      try { await save(); } catch (error) { state = previous; throw error; }
     } else if (method === 'pickProcess') {
       const result = await dialog.showOpenDialog(window, { title: '选择要分流的程序', filters: [{ name: 'Windows 程序', extensions: ['exe'] }], properties: ['openFile'] });
       return result.canceled ? null : path.basename(result.filePaths[0]);

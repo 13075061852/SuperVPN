@@ -85,6 +85,48 @@ test('default scheduling checks immediately and every minute, without overlappin
   timers[1].fn(); await service.check(); assert.equal(checks, 2); assert.equal(service.view().phase, 'ready');
   assert.equal(updater.autoInstallOnAppQuit, false); service.dispose();
 });
+test('manual checks briefly report the latest-version result or a redacted failure while automatic checks stay quiet', async () => {
+  const timers = new Set(), module = { exports: {} };
+  vm.runInNewContext(await fs.readFile('desktop/updates.cjs', 'utf8'), {
+    module, Date, Number, Promise,
+    setTimeout: (fn, ms) => { const timer = { fn, ms, unref() {} }; timers.add(timer); return timer; },
+    clearTimeout: timer => timers.delete(timer), setInterval() {}, clearInterval() {}
+  });
+  const updater = new EventEmitter();
+  updater.checkForUpdates = async () => updater.emit('update-not-available');
+  const service = module.exports.createUpdateService({ updater, enabled: true, currentVersion: '0.6.4' });
+  await service.check(); assert.equal(service.view().phase, 'current'); assert.equal(service.view().feedback, null); assert.equal(timers.size, 0);
+  const pending = service.check(true); assert.equal(service.view().phase, 'checking'); assert.equal(service.view().feedback, null);
+  await pending; assert.equal(service.view().feedback, 'current');
+  const latestTimer = [...timers][0]; assert.equal(latestTimer.ms, 3000); latestTimer.fn(); assert.equal(service.view().feedback, null);
+  updater.checkForUpdates = async () => { throw new Error('https://secret.invalid/?token=private'); };
+  await service.check(true); assert.equal(service.view().phase, 'error'); assert.equal(service.view().feedback, 'error'); assert.equal(service.view().error.includes('private'), false);
+  const failureTimer = [...timers].find(timer => timer !== latestTimer); failureTimer.fn(); assert.equal(service.view().feedback, null);
+  await service.check(true); service.dispose(); assert.equal([...timers].some(timer => timer !== latestTimer && timer !== failureTimer), false);
+});
+test('a manual check joins an automatic check and still receives the actual result', async () => {
+  let resolve; const f = fixture();
+  f.updater.checkForUpdates = () => new Promise(done => resolve = () => { f.updater.emit('update-not-available'); done(); });
+  const automatic = f.service.check(); await new Promise(done => setImmediate(done));
+  assert.equal(f.service.check(true), automatic); assert.equal(f.service.view().feedback, null);
+  resolve(); await automatic; assert.equal(f.service.view().feedback, 'current'); f.service.dispose();
+});
+test('manual checks use the automatic downloader and expose its actual progress without installing', async () => {
+  const f = fixture(); f.updater.checkForUpdates = async () => f.updater.emit('update-available', { version: '0.6.5' });
+  await f.service.check(true); assert.equal(f.updater.autoDownload, true); assert.equal(f.service.view().phase, 'downloading');
+  assert.equal(f.service.view().feedback, null);
+  f.updater.emit('download-progress', { percent: 62.7, transferred: 627, total: 1000 });
+  assert.equal(f.service.view().percent, 62.7); assert.equal(f.service.view().transferred, 627);
+  f.updater.emit('update-downloaded', { version: '0.6.5' }); assert.equal(f.service.view().phase, 'ready'); assert.deepEqual(f.calls, []);
+  assert.equal(f.updater.autoInstallOnAppQuit, false); f.service.dispose();
+});
+test('manual check IPC requests feedback without blocking other application controls', async () => {
+  const main = await fs.readFile('electron/main.cjs', 'utf8'); let manual;
+  const handle = vm.runInNewContext(`(${main.slice(main.indexOf('async function handle('), main.indexOf('function createWindow('))})`, {
+    updateService: { view: () => ({ supported: true }), check: value => { manual = value; return new Promise(() => {}); } }, view: () => ({ busy: false })
+  });
+  const result = await handle('checkForUpdates'); assert.equal(manual, true); assert.equal(result.busy, false);
+});
 test('sidebar owns update controls rather than settings and keeps the install prompt available', async () => {
   const main = await fs.readFile('src/main.jsx', 'utf8');
   assert.ok(main.includes('</nav><UpdateSidebar data={data} busy={busy} onAction={call}/></aside>'));
@@ -118,6 +160,16 @@ test('idle sidebar shows only check-update text without version or status introd
     assert.ok(html.includes('检查更新'));
     for (const text of ['已是最新版本', '当前版本', '0.6.3', '更新未完成', '安装版支持自动更新', '<strong', '<small']) assert.equal(html.includes(text), false);
   }
+});
+test('manual feedback stays in the button, with checking and latest-version states but no extra introduction', () => {
+  const data = { environment: { version: '0.6.4' }, updateInfo: { supported: true, phase: 'checking' } };
+  const render = () => renderToStaticMarkup(React.createElement(UpdateSidebar, { data, busy: false, onAction() {} }));
+  assert.match(render(), /<button[^>]*disabled[^>]*>检查中…<\/button>/);
+  data.updateInfo = { supported: true, phase: 'current', feedback: 'current' };
+  assert.match(render(), />已是最新版本<\/button>/); assert.doesNotMatch(render(), /<strong|<small|当前版本/);
+  data.updateInfo.feedback = null; assert.match(render(), />检查更新<\/button>/);
+  data.updateInfo = { supported: true, phase: 'error', feedback: 'error', error: '更新检查或下载失败，请检查网络及发布源' };
+  assert.match(render(), />检查失败，重试<\/button>/);
 });
 test('update UI shows real download progress and waits for a labeled installation confirmation', () => {
   const calls = [], data = { environment: { version: '0.6.0' }, updateInfo: { supported: true, phase: 'downloading', version: '0.6.1', percent: 37 } };
