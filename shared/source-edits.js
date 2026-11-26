@@ -3,7 +3,7 @@ export function editName(value) {
   if (typeof value !== 'string' || value.length > 120 || /[\r\n\t\x00-\x1f]/.test(value) || !value.trim()) throw new Error('名称须为 1–120 个字符，不能包含换行或控制字符');
   return value.trim();
 }
-export function editNode(state, payload, { connected = false, testing = false } = {}) {
+export function editNode(state, payload, { testing = false } = {}) {
   if (testing) throw new Error('请先停止测速再编辑节点');
   const original = state.nodes.find(node => node.id === payload?.id);
   if (!original) throw new Error('节点不存在');
@@ -30,7 +30,6 @@ export function editNode(state, payload, { connected = false, testing = false } 
   if (original.subscriptionId) next.subscriptionId = original.subscriptionId;
   else delete next.subscriptionId;
   const connectionChanged = JSON.stringify(original.outbound) !== JSON.stringify(next.outbound) || original.insecureRequested !== next.insecureRequested;
-  if (connected && connectionChanged) throw new Error('请先断开连接再修改连接参数');
   const nodeChecks = { ...state.nodeChecks };
   if (connectionChanged) delete nodeChecks[original.id];
   return { connectionChanged, state: { ...state, nodes: state.nodes.map(node => node.id === original.id ? next : node), nodeChecks } };

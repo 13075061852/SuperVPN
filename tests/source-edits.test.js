@@ -6,9 +6,9 @@ function fixture() {
   const node = { ...parseLink('trojan://secret@origin.example:443?security=tls&sni=cert.example#original'), subscriptionId: 's1' };
   return { ...defaultState(), nodes: [node], subscriptions: [{ id: 's1', name: 'old', url: 'https://example.invalid/private', allowInsecure: true }], selectedNodeId: node.id, nodeChecks: { [node.id]: { status: 'ok', delayMs: 45 } } };
 }
-test('renaming a connected node preserves its identity, source, credentials and measurements', () => {
+test('renaming a node preserves its identity, source, credentials and measurements', () => {
   const state = fixture(), original = structuredClone(state), node = state.nodes[0];
-  const result = editNode(state, { id: node.id, name: 'new' }, { connected: true });
+  const result = editNode(state, { id: node.id, name: 'new' });
   assert.equal(result.connectionChanged, false); assert.equal(result.state.nodes[0].name, 'new');
   assert.equal(result.state.nodes[0].subscriptionId, 's1'); assert.equal(result.state.selectedNodeId, node.id);
   assert.deepEqual(result.state.nodes[0].outbound, node.outbound); assert.deepEqual(result.state.nodeChecks, state.nodeChecks); assert.deepEqual(state, original);
@@ -18,7 +18,6 @@ test('endpoint editing clears stale latency but does not replace TLS SNI or auth
   const result = editNode(state, { id: node.id, name: node.name, host: 'next.example', port: 8443 });
   const updated = result.state.nodes[0]; assert.equal(updated.host, 'next.example'); assert.equal(updated.outbound.server, 'next.example'); assert.equal(updated.outbound.server_port, 8443);
   assert.equal(updated.outbound.tls.server_name, 'cert.example'); assert.equal(updated.outbound.password, 'secret'); assert.equal(result.state.nodeChecks[node.id], undefined);
-  assert.throws(() => editNode(state, { id: node.id, name: node.name, port: 8443 }, { connected: true }), /断开/);
   assert.throws(() => editNode(state, { id: node.id, name: 'new' }, { testing: true }), /停止测速/);
 });
 test('full replacement reparses protocol parameters and cannot adopt payload identity or policy', () => {

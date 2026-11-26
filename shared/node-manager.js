@@ -58,6 +58,15 @@ export function removeSubscription(state, id) {
     selectedNodeId: nodes.some(n => n.id === state.selectedNodeId) ? state.selectedNodeId : nodes[0]?.id || null
   };
 }
+export function removeManualNode(state, id) {
+  const node = state.nodes.find(node => node.id === id);
+  if (!node) return state;
+  if (node.subscriptionId) throw new Error('请通过所属订阅管理此节点');
+  const nodes = state.nodes.filter(node => node.id !== id);
+  const nodeChecks = { ...state.nodeChecks };
+  delete nodeChecks[id];
+  return { ...state, nodes, nodeChecks, selectedNodeId: state.selectedNodeId === id ? nodes[0]?.id || null : state.selectedNodeId };
+}
 export function legacyCandidateIds(state, subscription) {
   let host;
   try { host = new URL(subscription.url).hostname; } catch { return []; }

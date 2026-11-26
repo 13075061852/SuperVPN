@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { defaultState, parseLink } from '../shared/proxy.js';
 import { nodeCounts, visibleNodeItems, removeSubscription } from '../shared/node-manager.js';
-import { sourceGroups, sourceScope, nodeSourceGroup, prepareManualLinks, selectedSource } from '../src/source-groups.js';
+import { sourceGroups, sourceScope, nodeSourceGroup, selectedSource } from '../src/source-groups.js';
+import { prepareImportLinks } from '../shared/subscription.js';
 const link = 'vless://11111111-2222-4333-8444-555555555555@node.example:443?security=tls&sni=site.example&type=ws&path=%2Froute#Same-name';
 function state() {
   const s = defaultState();
@@ -58,10 +59,10 @@ test('removing a subscription never removes independent manual source entries', 
   assert.equal(visibleNodeItems(stale.state, { group: stale.group }).length, 0);
 });
 test('optional node names alter only the display fragment, not transport or authentication', () => {
-  const renamed = prepareManualLinks(link, ' 工作 #A ');
+  const [{ link: renamed }] = prepareImportLinks({ content: link, name: ' 工作 #A ' });
   assert.equal(parseLink(renamed).name, '工作 #A'); assert.deepEqual(parseLink(renamed).outbound, parseLink(link).outbound);
-  assert.equal(prepareManualLinks(link, ''), link);
-  const batch = prepareManualLinks(`${link}\n${link}`, 'Provider').split('\n');
+  assert.equal(prepareImportLinks(link)[0].link, link);
+  const batch = prepareImportLinks({ content: `${link}\n${link}`, name: 'Provider' }).map(entry => entry.link);
   assert.deepEqual(batch.map(x => parseLink(x).name), ['Provider · 1', 'Provider · 2']);
   assert.deepEqual(parseLink(batch[0]).outbound, parseLink(batch[1]).outbound);
 });

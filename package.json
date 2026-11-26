@@ -1,6 +1,6 @@
 {
   "name": "supervpn",
-  "version": "0.6.5",
+  "version": "0.6.6",
   "private": true,
   "description": "A quiet, rule-based Windows proxy client powered by sing-box",
   "type": "module",
@@ -11,6 +11,7 @@
     "url": "https://github.com/13075061852/SuperVPN.git"
   },
   "scripts": {
+    "start": "npm run desktop",
     "dev": "vite --host 127.0.0.1",
     "desktop": "node scripts/desktop.mjs",
     "build": "vite build",

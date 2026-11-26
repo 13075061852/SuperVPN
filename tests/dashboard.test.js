@@ -23,22 +23,11 @@ before(async () => {
 after(async () => { await vite?.close(); if (cache) await fs.rm(cache, { recursive: true, force: true }); });
 const noop = () => {};
 test('dashboard includes each requested module without a virtual NIC or fabricated IP', () => {
-  const data = { ...defaultState(), session: { connected: false, upload: 1024, download: 2048 }, environment: { desktop: false } };
+  const data = { ...defaultState(), session: { connected: false, upSpeed: 1024, downSpeed: 2048 }, environment: { desktop: false } };
   const html = renderToStaticMarkup(React.createElement(Dashboard, { data, busy: false, onAction: noop, onSetting: noop, onNavigate: noop, onImport: noop }));
-  for (const title of ['仪表盘', '网络速度', '系统代理', '出站模式', '出口 IP', '内网 IP', '流量统计', '规则', '全局', '直连']) assert.ok(html.includes(title), title);
-  for (const absent of ['网络检测', 'network-country', '虚拟网卡', '18.182.8.79', '192.168.0.36', 'DEV']) assert.equal(html.includes(absent), false);
-  assert.ok(html.includes('1.0 KB')); assert.ok(html.includes('2.0 KB'));
-});
-test('traffic totals use two labeled data rows without a donut or duplicate legends', () => {
-  for (const [upload, download] of [[0, 0], [2726298, 1887437]]) {
-    const data = { ...defaultState(), session: { connected: false, upload, download }, environment: { desktop: false } };
-    const html = renderToStaticMarkup(React.createElement(Dashboard, { data, busy: false, onAction: noop, onSetting: noop, onNavigate: noop, onImport: noop }));
-    const panel = html.slice(html.indexOf('<section class="instrument-card totals-panel"')).split('</section>')[0];
-    assert.ok(panel.includes('本次连接累计流量')); assert.equal((panel.match(/class="traffic-total-row"/g) || []).length, 2);
-    assert.ok(panel.includes('上传</dt>')); assert.ok(panel.includes('下载</dt>'));
-    assert.equal(panel.includes('traffic-donut'), false); assert.equal(panel.includes('totals-legend'), false);
-    assert.ok(panel.includes(upload ? '2.6 MB' : '0 B')); assert.ok(panel.includes(download ? '1.8 MB' : '0 B'));
-  }
+  for (const title of ['仪表盘', '网络速度', '系统代理', '出站模式', '出口 IP', '内网 IP', '节点测速', '规则', '全局', '直连']) assert.ok(html.includes(title), title);
+  for (const absent of ['流量统计', '累计流量', '网络检测', 'network-country', '虚拟网卡', '18.182.8.79', '192.168.0.36', 'DEV']) assert.equal(html.includes(absent), false);
+  assert.ok(html.includes('1.0 KB/s')); assert.ok(html.includes('2.0 KB/s'));
 });
 test('dashboard module spacing is owned by the parent gap without stacked child margins', async () => {
   const css = await fs.readFile('src/styles.css', 'utf8');
@@ -48,10 +37,10 @@ test('dashboard module spacing is owned by the parent gap without stacked child 
     assert.ok(rule); assert.ok(rule[1].includes('margin: 0;')); assert.equal(rule[1].includes('margin-top: 12px'), false);
   }
 });
-test('dashboard groups compact controls before traffic, parallel addresses and selected-node testing', async () => {
+test('dashboard places the speed dial beside live network speed, above the address cards', async () => {
   const data = { ...defaultState(), session: { connected: false }, environment: { desktop: false } };
   const html = renderToStaticMarkup(React.createElement(Dashboard, { data, busy: false, onAction: noop, onSetting: noop, onNavigate: noop, onImport: noop }));
-  const groups = ['dashboard-controls', 'instrument-grid', 'address-panels', 'node-speed-test', 'dashboard-connect'];
+  const groups = ['dashboard-controls', 'instrument-grid', 'speed-panel', 'node-speed-test', 'address-panels', 'dashboard-connect'];
   for (let i = 1; i < groups.length; i++) assert.ok(html.indexOf(groups[i - 1]) < html.indexOf(groups[i]));
   assert.equal(html.includes('class="instrument-card proxy-panel"'), false); assert.equal(html.includes('outbound-panel'), false);
   assert.equal(html.includes('>选项</button>'), false);
@@ -60,12 +49,13 @@ test('dashboard groups compact controls before traffic, parallel addresses and s
   assert.match(css, /@media \(max-width: 600px\)\s*\{\s*\.dashboard-controls/);
   assert.match(css, /\.outbound-choices\s*\{[^}]*align-items: center;[^}]*margin: 0;/);
 });
-test('address cards sit side by side and size to content without fixed row heights', async () => {
+test('address cards share equal flexible row and heading heights', async () => {
   const css = await fs.readFile('src/styles.css', 'utf8');
   const rules = [...css.matchAll(/\.address-panels\s*\{([^}]+)\}/g)].map(match => match[1]);
   assert.ok(rules.some(rule => rule.includes('grid-template-columns: repeat(2, minmax(0, 1fr))')));
-  assert.ok(rules.some(rule => rule.includes('align-items: start')));
+  assert.ok(rules.some(rule => rule.includes('align-items: stretch')));
   assert.equal(rules.some(rule => /grid-template-rows:|min-height:|height:/.test(rule)), false);
+  assert.match(css, /\.address-panels \.instrument-heading\s*\{\s*min-height: 24px;/);
 });
 test('dashboard keeps only the labeled connect button at the lower right without a status card', async () => {
   for (const connected of [true, false]) {
@@ -76,7 +66,7 @@ test('dashboard keeps only the labeled connect button at the lower right without
     assert.equal(footer.includes('已连接'), false); assert.equal(footer.includes('未连接'), false);
     assert.equal(footer.includes('尚未选择线路'), false); assert.equal(footer.includes('<strong'), false);
     assert.equal((footer.match(/<button/g) || []).length, 1);
-    assert.ok(html.indexOf('<footer') > html.indexOf('totals-panel')); assert.equal(html.includes('dashboard-power'), false);
+    assert.ok(html.indexOf('<footer') > html.indexOf('node-speed-test')); assert.equal(html.includes('dashboard-power'), false);
   }
   const css = await fs.readFile('src/styles.css', 'utf8');
   assert.match(css, /\.instrument-dashboard\s*\{[^}]*min-height: 100%/);
@@ -91,7 +81,7 @@ test('home node tests show only selected-node measurements and disclose usage wi
   let html = render(); assert.ok(html.includes('未测')); assert.ok(html.includes('各约 10 秒')); assert.equal(html.includes('20 MiB'), false);
   const start = html.match(/<button[^>]*aria-label="开始当前节点速度测试"[^>]*>/)?.[0];
   assert.ok(start); assert.equal(start.includes('disabled'), false);
-  assert.equal(html.includes('type="checkbox"'), false); assert.ok(html.includes('compact-speed-test')); assert.equal(html.includes('测试完成'), false);
+  assert.equal(html.includes('type="checkbox"'), false); assert.ok(html.includes('speed-dial')); assert.equal(html.includes('测试完成'), false);
   data.speedTest = { nodeId: node.id, phase: 'done', latency: { status: 'ok', delayMs: 61 }, download: { status: 'ok', mbps: 12.3 }, upload: { status: 'failed', reason: '未完成' } };
   html = render(); assert.ok(html.includes('61 ms')); assert.ok(html.includes('12.3 Mbps')); assert.ok(html.includes('失败'));
   data.speedTest.download.status = 'partial'; html = render();
@@ -110,6 +100,32 @@ test('speed values show current rate while running, then final average without s
   data.speedTest.running = true; data.speedTest.phase = 'warmup-upload'; delete data.speedTest.upload;
   html = render(); assert.ok(html.includes('预热中')); assert.equal(html.includes('0 Mbps'), false);
   data.speedTest.nodeId = 'other'; html = render(); assert.equal(html.includes('21.52 Mbps'), false); assert.equal(html.includes('0 Mbps'), false);
+});
+test('speed dial follows real download and upload samples, then shows the measured average', () => {
+  const node = parseLink('http://dial.example:8080');
+  const test = { running: true, nodeId: node.id, phase: 'download' };
+  const data = { ...defaultState(), nodes: [node], selectedNodeId: node.id, environment: { desktop: true, speedTesting: true }, speedTest: test };
+  const render = () => renderToStaticMarkup(React.createElement(NodeSpeedTest, { data, busy: false, onAction: noop }));
+  const read = html => html.match(/class="speed-dial-rate">([^<]+)/)[1].trim();
+  const angle = html => Number(html.match(/class="speed-dial-needle" style="transform:rotate\(([-.\d]+)deg\)/)[1]);
+  assert.equal(read(render()), '—');
+  test.live = { direction: 'download', mbps: 5 };
+  const low = render();
+  assert.equal(read(low), '5'); assert.ok(low.includes('下载实时速率'));
+  test.live.mbps = 70;
+  assert.ok(angle(render()) > angle(low));
+  test.live.mbps = 0;
+  assert.equal(read(render()), '0'); assert.equal(angle(render()), -120);
+  test.phase = 'upload';
+  assert.equal(read(render()), '—');
+  test.live = { direction: 'upload', mbps: 18 };
+  assert.equal(read(render()), '18'); assert.ok(render().includes('上传实时速率'));
+  test.running = false;
+  test.phase = 'done';
+  test.download = { status: 'ok', mbps: 64.25 };
+  assert.equal(read(render()), '64.25'); assert.ok(render().includes('下载均速'));
+  test.nodeId = 'other';
+  assert.equal(read(render()), '—');
 });
 test('one click starts the selected node test with explicit confirmation and stopping remains available', () => {
   const node = parseLink('http://selected.example:8080');
@@ -148,7 +164,7 @@ test('node cards remove filters and options while preserving measured statuses a
   data.nodes = [parseLink('http://one.example:8080#同名'), parseLink('http://two.example:8080#同名')];
   data.selectedNodeId = data.nodes[0].id;
   data.nodeChecks = { [data.nodes[0].id]: { status: 'ok', delayMs: 89, measurement: 'warm', checkedAt: Date.now() }, [data.nodes[1].id]: { status: 'failed', label: '连接被重置' } };
-  const html = renderToStaticMarkup(React.createElement(NodeManager, { data, preferredGroup: 'manual', busy: false, onAction: noop, onImport: noop, onDeleteNode: noop }));
+  const html = renderToStaticMarkup(React.createElement(NodeManager, { data, preferredGroup: 'manual', busy: false, onAction: noop, onImport: noop }));
   assert.ok(html.includes('node-card-grid')); assert.ok(html.includes('89')); assert.ok(html.includes('不能用'));
   for (const text of ['搜索线路', '节点分组', '节点排序', '更多选项', '连接被重置']) assert.equal(html.includes(text), false);
   assert.equal((html.match(/role="listitem"/g) || []).length, 2);
@@ -159,7 +175,7 @@ test('node cards apply delay order and persisted hide preference while keeping b
   const data = { ...defaultState(), session: { connected: false } };
   data.nodes = [parseLink('http://one.example:8080#慢线路'), parseLink('http://two.example:8080#快线路'), parseLink('http://three.example:8080#失败线路')];
   data.nodeChecks = { [data.nodes[0].id]: { status: 'ok', delayMs: 284, checkedAt: Date.now() }, [data.nodes[1].id]: { status: 'ok', delayMs: 50, checkedAt: Date.now() }, [data.nodes[2].id]: { status: 'failed' } };
-  const render = () => renderToStaticMarkup(React.createElement(NodeManager, { data, preferredGroup: 'manual', busy: false, onAction: noop, onImport: noop, onDeleteNode: noop }));
+  const render = () => renderToStaticMarkup(React.createElement(NodeManager, { data, preferredGroup: 'manual', busy: false, onAction: noop, onImport: noop }));
   const previousWindow = globalThis.window;
   try {
     globalThis.window = { localStorage: { getItem: () => 'false' } };

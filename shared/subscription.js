@@ -4,6 +4,33 @@ import { isInformationName } from './node-manager.js';
 export function isSubscriptionUrl(text) {
   try { const u = new URL(text.trim()); return ['https:', 'http:'].includes(u.protocol) && ((u.pathname && u.pathname !== '/') || !!u.search); } catch { return false; }
 }
+
+export function prepareImportLinks(payload, subscriptions = []) {
+  const content = typeof payload === 'string' ? payload : payload?.content;
+  if (typeof content !== 'string' || content.length > 262144) throw new Error('导入内容无效或过长');
+  const lines = content.split(/\r?\n/).map((text, index) => ({ line: text.trim(), lineNumber: index + 1 })).filter(({ line }) => line);
+  if (!lines.length || lines.length > 100) throw new Error('每次可导入 1–100 条链接');
+
+  const name = typeof payload?.name === 'string' ? payload.name.replace(/[\r\n\t]/g, ' ').trim().slice(0, 120) : '';
+  const savedUrls = new Set(subscriptions.map(sub => sub.url));
+  const seenUrls = new Set();
+  const entries = [];
+  for (const [index, { line, lineNumber }] of lines.entries()) {
+    const suffix = lines.length === 1 ? '' : ` · ${index + 1}`;
+    const label = name && `${name.slice(0, 120 - suffix.length)}${suffix}`;
+    if (isSubscriptionUrl(line) || savedUrls.has(line) || (lines.length === 1 && payload?.kind === 'subscription')) {
+      let url;
+      try { url = new URL(line); } catch { throw new Error(`第 ${lineNumber} 行：订阅地址无效`); }
+      if (url.protocol !== 'https:' || url.username || url.password) throw new Error(`第 ${lineNumber} 行：订阅必须使用 HTTPS，且不能包含 URL 用户名密码`);
+      if (!seenUrls.has(line)) entries.push({ kind: 'subscription', url: line, name: label, lineNumber });
+      seenUrls.add(line);
+    } else {
+      entries.push({ kind: 'node', link: label ? `${line.split('#')[0]}#${encodeURIComponent(label)}` : line, lineNumber });
+    }
+  }
+  return entries;
+}
+
 export function parseSubscription(text) {
   if (typeof text !== 'string' || text.length > 2097152) throw new Error('订阅内容过大');
   let body = text.replace(/^\uFEFF/, '').trim();

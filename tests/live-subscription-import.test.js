@@ -18,12 +18,13 @@ function fixture({ manual = false, selected = 'active', save = async () => {}, f
   const other = { ...parseLink('http://other.example:8080'), id: 'other', subscriptionId: 'other-source' };
   const state = { ...defaultState(), nodes: [active, other], selectedNodeId: selected, subscriptions: [{ id: 'current', name: 'Current', url: 'https://current.example/sub' }, { id: 'other-source', name: 'Other', url: 'https://other.example/sub' }], nodeChecks: { active: { status: 'ok', delayMs: 31 }, other: { status: 'ok', delayMs: 40 } } };
   const session = { connected: true, nodeId: 'active', subscriptionId: manual ? null : 'current', startedAt: 1000, upload: 500, download: 1000 };
-  let fetches = 0, saves = 0;
-  const context = { state, session, nodeManager, subscriptionApi, URL, Date, randomBytes: () => ({ toString: () => 'new-source' }), importReport: null,
-    fetchSubscription: async () => { fetches++; return fetch ? fetch(context) : { body: 'http://new.example:9090#Imported', usage: null }; },
+  let fetches = 0, saves = 0, ids = 0;
+  const context = { state, session, nodeManager, subscriptionApi, api: { parseLink }, errorText: error => error.message, URL, Date,
+    randomBytes: () => ({ toString: () => ++ids === 1 ? 'new-source' : `new-source-${ids}` }), importReport: null,
+    fetchSubscription: async url => { fetches++; return fetch ? fetch(context, url) : { body: 'http://new.example:9090#Imported', usage: null }; },
     save: async () => { saves++; await save(); }, log: () => {}, start: () => assert.fail('Import must not restart core'), stop: () => assert.fail('Import must not stop core'), applyProxy: () => assert.fail('Import must not change system proxy') };
-  const run = vm.runInNewContext(`(${importFunction})`, context);
-  return { context, run, state, session, stats: () => ({ fetches, saves }) };
+  vm.runInNewContext(importFunction, context);
+  return { context, run: context.importSubscription, runBatch: context.importLinks, state, session, stats: () => ({ fetches, saves }) };
 }
 test('new subscription imports while connected without changing selected node, active session, core config or latency', async () => {
   const f = fixture(), before = JSON.stringify(createConfig(f.state));
@@ -76,21 +77,55 @@ test('a source removed during download is not resurrected and disconnected updat
   const legacy = fixture({ manual: true }); legacy.session.connected = false;
   await legacy.run('https://new.example/sub'); assert.notEqual(legacy.context.state.selectedNodeId, 'active');
 });
-let vite, cache, Profiles;
+test('automatic mixed import classifies HTTPS proxy and subscriptions, saves once and preserves the active connection', async () => {
+  const f = fixture(), previousConfig = JSON.stringify(createConfig(f.state));
+  await f.runBatch({ content: 'https://proxy.example:8443\nhttps://new.example/feed?key=example\nhttps://other.example/sub\nhttps://new.example/feed?key=example', name: '工作线路' });
+  const result = f.context.state;
+  assert.equal(result.nodes.find(node => node.host === 'proxy.example').name, '工作线路 · 1');
+  assert.equal(result.subscriptions.find(sub => sub.id === 'new-source').name, '工作线路 · 2');
+  assert.equal(result.subscriptions.find(sub => sub.id === 'other-source').name, '工作线路 · 3');
+  assert.equal(f.context.importReport.imported, 3);
+  assert.equal(Array.from(f.context.importReport.subscriptionIds).join(','), 'new-source,other-source');
+  assert.equal(f.context.session, f.session);
+  assert.equal(JSON.stringify(createConfig(result)), previousConfig);
+  assert.deepEqual(f.stats(), { fetches: 2, saves: 1 });
+});
+test('automatic import leaves the batch uncommitted after validation, download or save fails', async () => {
+  const invalid = fixture();
+  await assert.rejects(invalid.runBatch('https://new.example/sub\n\ninvalid'), /第 3 行/);
+  assert.deepEqual(invalid.stats(), { fetches: 0, saves: 0 });
+
+  const broken = fixture({ fetch: (_, url) => {
+    if (url.includes('broken.example')) throw new Error('订阅获取失败');
+    return { body: 'http://new.example:9090', usage: null };
+  } });
+  await assert.rejects(broken.runBatch('https://new.example/sub\nhttp://proxy.example:8080\nhttps://broken.example/sub'), /第 3 行：订阅获取失败/);
+  assert.deepEqual(broken.stats(), { fetches: 2, saves: 0 });
+
+  const disk = fixture({ save: async () => { throw new Error('disk failure'); } });
+  await assert.rejects(disk.runBatch('https://new.example/sub\nhttp://proxy.example:8080'), /disk failure/);
+  for (const f of [invalid, broken, disk]) {
+    assert.equal(f.context.state, f.state);
+    assert.equal(f.context.importReport, null);
+  }
+});
+let vite, cache, Profiles, SourceDetails;
 before(async () => {
   cache = await fs.mkdtemp(path.join(os.tmpdir(), 'supervpn-live-import-ui-'));
   vite = await createServer({ configFile: false, cacheDir: cache, optimizeDeps: { noDiscovery: true, include: [] }, plugins: [react()], server: { middlewareMode: true, watch: null, hmr: false, ws: false }, appType: 'custom' });
   Profiles = (await vite.ssrLoadModule('/src/Profiles.jsx')).default;
+  SourceDetails = (await vite.ssrLoadModule('/src/SourceDetails.jsx')).default;
 });
 after(async () => { await vite?.close(); if (cache) await fs.rm(cache, { recursive: true, force: true }); });
-test('connected UI enables active and other subscription updates and removals on a capable backend', () => {
+test('connected UI enables active and other subscription removals on a capable backend', () => {
   const f = fixture();
-  const html = renderToStaticMarkup(React.createElement(Profiles, { data: { ...f.state, session: f.session, environment: { connectedEditing: true } }, busy: false, selectedGroup: 'other-source' }));
-  const updates = [...html.matchAll(/<button\b([^>]*)>(?:(?!<button)[\s\S])*?更新订阅<\/button>/g)].map(match => match[1]);
-  // Match attributes on the exact update buttons, not preceding sibling buttons.
-  assert.equal(updates.length, 2); assert.ok(updates.every(attributes => !attributes.includes('disabled')));
-  const removals = [...html.matchAll(/<button\b([^>]*)>(?:(?!<button)[\s\S])*?移除订阅<\/button>/g)].map(match => match[1]);
-  assert.equal(removals.length, 2); assert.ok(removals.every(attributes => !attributes.includes('disabled')));
+  const data = { ...f.state, session: f.session, environment: { connectedEditing: true } };
+  for (const item of data.subscriptions) {
+    const panel = renderToStaticMarkup(React.createElement(SourceDetails, { data, busy: false, target: { kind: 'subscription', item } }));
+    const remove = panel.match(/<button\b([^>]*)>(?:(?!<button)[\s\S])*?移除订阅<\/button>/);
+    assert.ok(remove); assert.doesNotMatch(remove[1], /disabled/);
+  }
+  const html = renderToStaticMarkup(React.createElement(Profiles, { data, busy: false, selectedGroup: 'other-source' }));
   assert.match(html, /<button class="button primary">[\s\S]*?导入<\/button>/);
   assert.equal(nodeManager.subscriptionInUse(f.state, { ...f.session, nodeId: 'other', subscriptionId: 'other-source' }, 'current'), false);
 });

@@ -30,7 +30,7 @@ function fixture() {
   state.informationNodes = [{ name: '剩余流量：430.53 GB', subscriptionId: 's-1' }, { name: '距离下次重置剩余：7 天', subscriptionId: 's-1' }];
   return state;
 }
-function render(data) { return renderToStaticMarkup(React.createElement(Profiles, { data, busy: false, onImport: noop, onOpen: noop, onAction: noop, onDelete: noop, onDeleteNode: noop, onSecurity: noop })); }
+function render(data) { return renderToStaticMarkup(React.createElement(Profiles, { data, busy: false, onImport: noop, onOpen: noop, onAction: noop, onManage: noop })); }
 test('subscription facts preserve real provider values and do not fabricate total quota or percentages', () => {
   assert.deepEqual(subscriptionFacts([{ name: '剩余流量：430.53 GB' }, { name: '距离下次重置剩余:7 天' }, { name: '套餐到期：2027-07-05' }]), { remaining: '430.53 GB', reset: '7 天', expiry: '2027-07-05' });
   assert.deepEqual(subscriptionFacts(), { remaining: null, reset: null, expiry: null });
@@ -69,13 +69,16 @@ test('source cards do not render credential URLs or protocol authentication UUID
 test('real quota renders a proportional progress bar and unknown totals never render a fake percentage', () => {
   const data = fixture(); data.subscriptions[0].usage = { upload: 50, download: 200, total: 1000 };
   const html = render(data); assert.ok(html.includes('aria-valuenow="25"')); assert.ok(html.includes('width:25%'));
-  assert.ok(html.includes('已用 250 B')); assert.ok(html.includes('750 B')); assert.ok(html.includes('更新流量')); assert.ok(html.includes('编辑订阅')); assert.ok(html.includes('编辑节点'));
+  assert.ok(html.includes('已用 250 B')); assert.ok(html.includes('750 B'));
   const unknown = render(fixture()); assert.ok(unknown.includes('总额度未知')); assert.equal(unknown.includes('role="progressbar"'), false);
 });
 test('node editor exposes endpoint fields and a masked replacement input without revealing existing secrets', () => {
   const node = { ...parseLink('trojan://private-secret@node.example:443#测试节点'), subscriptionId: 's-1' };
   const html = renderToStaticMarkup(React.createElement(SourceEditor, { target: { kind: 'node', item: node }, connected: true, busy: false, onSave: noop, onCancel: noop }));
-  assert.ok(html.includes('服务器')); assert.ok(html.includes('端口')); assert.ok(html.includes('type="password"')); assert.ok(html.includes('连接中仅可修改名称'));
+  assert.ok(html.includes('服务器')); assert.ok(html.includes('端口')); assert.ok(html.includes('type="password"'));
+  assert.doesNotMatch(html, /连接中仅可修改名称/);
+  assert.doesNotMatch(html, /id="edit-source-name"[^>]*disabled/);
+  for (const id of ['edit-node-host', 'edit-node-port', 'edit-source-replacement']) assert.match(html, new RegExp(`id="${id}"[^>]*disabled`));
   assert.equal(html.includes('private-secret'), false); assert.ok(html.includes('value="node.example"')); assert.ok(html.includes('disabled=""'));
 });
 test('subscription editor keeps the original token-bearing URL outside the form', () => {
@@ -89,7 +92,11 @@ test('source cards expose native selection buttons with full-card hit areas and 
   assert.equal(html.includes('source-node-identity'), false); assert.equal(html.includes('<code'), false);
   const css = await fs.readFile('src/styles.css', 'utf8');
   assert.match(css, /\.source-card-name::after\s*\{[^}]*position: absolute;[^}]*inset: 0;[^}]*z-index: 1;/);
-  assert.match(css, /\.tidy-sources \.profile-menu[^}]*z-index: 2;/);
+  assert.match(css, /\.tidy-sources \.source-manage[^}]*z-index: 2;/);
+  assert.equal((html.match(/aria-haspopup="dialog"/g) || []).length, 4);
+  assert.match(html, /aria-label="管理订阅 主力订阅 · s-1"/);
+  assert.match(html, /aria-label="管理节点 同名节点 · /);
+  assert.equal(html.includes('context-menu'), false);
   assert.match(css, /\.source-card-name:active:not\(:disabled\)\s*\{ transform: none;/);
 });
 test('empty sources show a useful import action without fake subscriptions or connected state', () => {

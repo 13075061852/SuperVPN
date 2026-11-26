@@ -20,7 +20,8 @@ const { runSpeedTest } = require('../desktop/speed-test.cjs');
 const { createUpdateService } = require('../desktop/updates.cjs');
 const { validateDownloadedInstaller } = require('../desktop/update-integrity.cjs');
 const { createReconnectTracker } = require('../desktop/reconnect-required.cjs');
-let networkQueue = Promise.resolve(), updateService;
+const { createSubscriptionUsagePoller } = require('../desktop/subscription-usage-poller.cjs');
+let networkQueue = Promise.resolve(), updateService, usagePoller;
 // A source build must not silently hand its window to an older installed EXE.
 if (!app.isPackaged) {
   app.setName('SuperVPN Dev');
@@ -30,7 +31,7 @@ if (!app.isPackaged) {
 }
 const exec = promisify(execFile);
 let window, tray, state, api, child, runtimeFile, quitting = false, busy = false, admin = false;
-let session = { connected: false, startedAt: null, upload: 0, download: 0, upSpeed: 0, downSpeed: 0, connections: 0 }, logs = [];
+let session = { connected: false, startedAt: null, upSpeed: 0, downSpeed: 0, connections: 0 }, logs = [];
 let secret = '', previousTotals = null, subscriptionApi, nodeManager, sourceEdits, connectionMode, websiteRules, importReport = null;
 const reconnectTracker = createReconnectTracker({ createConfig: state => api.createConfig(state) });
 let speedTest = { running: false }, speedAbort, speedPromise;
@@ -40,7 +41,7 @@ const dataPath = (name) => path.join(app.getPath('userData'), name);
 const corePath = () => path.join(app.isPackaged ? process.resourcesPath : app.getAppPath() + '/resources', 'core', 'sing-box.exe');
 const errorText = e => e.message || String(e);
 function log(message, level = 'info') { logs = [...logs.slice(-199), { time: new Date().toISOString(), level, message }]; broadcast(); }
-function view() { const { terminalProxyBackup, ...publicState } = state; return { ...publicState, windowState: windowState(window), terminalProxy: terminalProxyView(terminalProxyBackup, state.settings.mixedPort), subscriptions: (state.subscriptions || []).map(({ url, ...sub }) => ({ ...sub, allowInsecure: sub.certificatePolicy !== 'strict' && (sub.allowInsecure === true || state.settings.honorImportedInsecure !== false), legacyNodeIds: nodeManager.legacyCandidateIds(state, { url }) })), importReport, testProgress, speedTest, updateInfo: updateService?.view() || { supported: false, phase: 'development', currentVersion: app.getVersion() }, nodes: state.nodes.map(({ outbound, ...n }) => ({ ...n, tlsInsecureAllowed: api.tlsCompatibilityAllowed(state, n) })), session, reconnectRequired: reconnectTracker.required(state, session.connected), logs, environment: { desktop: true, programDiscovery: true, speedTesting: true, websiteRouting: true, websiteOpening: true, connectedEditing: true, admin, coreReady: !!global.coreReady, version: app.getVersion(), packaged: app.isPackaged, development: !app.isPackaged }, busy }; }
+function view() { const { terminalProxyBackup, ...publicState } = state; return { ...publicState, windowState: windowState(window), terminalProxy: terminalProxyView(terminalProxyBackup, state.settings.mixedPort), subscriptions: (state.subscriptions || []).map(({ url, ...sub }) => ({ ...sub, allowInsecure: sub.certificatePolicy !== 'strict' && (sub.allowInsecure === true || state.settings.honorImportedInsecure !== false), legacyNodeIds: nodeManager.legacyCandidateIds(state, { url }) })), importReport, testProgress, speedTest, updateInfo: updateService?.view() || { supported: false, phase: 'development', currentVersion: app.getVersion() }, nodes: state.nodes.map(({ outbound, ...n }) => ({ ...n, tlsInsecureAllowed: api.tlsCompatibilityAllowed(state, n) })), session, reconnectRequired: reconnectTracker.required(state, session.connected), logs, environment: { desktop: true, programDiscovery: true, speedTesting: true, websiteRouting: true, websiteOpening: true, connectedEditing: true, connectedNodeEditing: true, connectedNodeDeletion: true, admin, coreReady: !!global.coreReady, version: app.getVersion(), packaged: app.isPackaged, development: !app.isPackaged }, busy }; }
 function broadcast() { if (window && !window.isDestroyed()) window.webContents.send('update', view()); }
 function broadcastTests() {
   if (testUpdateTimer) return;
@@ -135,28 +136,100 @@ async function start() {
     if (state.mode === 'system') await applyProxy();
     const activeNode = state.nodes.find(n => n.id === state.selectedNodeId);
     reconnectTracker.started(config);
-    session = { connected: true, node: { id: activeNode.id, name: activeNode.name, host: activeNode.host, port: activeNode.port, protocol: activeNode.protocol, subscriptionId: activeNode.subscriptionId || null }, nodeId: activeNode.id, subscriptionId: activeNode.subscriptionId || null, startedAt: Date.now(), upload: 0, download: 0, upSpeed: 0, downSpeed: 0, connections: 0 };
+    session = { connected: true, node: { id: activeNode.id, name: activeNode.name, host: activeNode.host, port: activeNode.port, protocol: activeNode.protocol, subscriptionId: activeNode.subscriptionId || null }, nodeId: activeNode.id, subscriptionId: activeNode.subscriptionId || null, startedAt: Date.now(), upSpeed: 0, downSpeed: 0, connections: 0 };
     log('本地代理服务已启动。远端可用性取决于节点，请用实际网络请求验证');
   } catch (e) { await stop(); throw e; }
 }
+async function fetchSubscriptionUsage(subscription) {
+  const fetched = await fetchSubscription(subscription.url);
+  const parsed = subscriptionApi.parseSubscription(fetched.body);
+  return { usage: fetched.usage, information: parsed.information || [] };
+}
+async function applyAutomaticUsage(subscription, result) {
+  if (quitting || busy || !(state.subscriptions || []).some(sub => sub === subscription)) return false;
+  // Missing provider metadata is not evidence of zero usage or an empty plan.
+  if (!result.usage && !result.information.length) return false;
+  busy = true;
+  const previous = state;
+  state = { ...state,
+    subscriptions: state.subscriptions.map(sub => sub === subscription ? { ...sub, usage: result.usage || sub.usage, usageUpdatedAt: Date.now() } : sub),
+    informationNodes: [...(state.informationNodes || []).filter(node => node.subscriptionId !== subscription.id), ...result.information.map(node => ({ ...node, subscriptionId: subscription.id }))]
+  };
+  try { await save(); return true; }
+  catch { state = previous; return false; }
+  finally { busy = false; broadcast(); }
+}
 async function importSubscription(url, existingId, displayName) {
   if (existingId && !(state.subscriptions || []).some(s => s.id === existingId)) throw new Error('订阅不存在');
+  const downloaded = await readSubscription(url);
+  const staged = stageSubscription(state, url, existingId, displayName, downloaded);
+  await commitImport(staged.state, staged.report);
+  log(staged.message);
+}
+async function readSubscription(url) {
   const fetched = await fetchSubscription(url);
-  const parsed = subscriptionApi.parseSubscription(fetched.body);
+  return { parsed: subscriptionApi.parseSubscription(fetched.body), usage: fetched.usage };
+}
+function stageSubscription(base, url, existingId, displayName, { parsed, usage }) {
   // Only saved state changes; the running core retains its startup configuration.
-  if (existingId && !(state.subscriptions || []).some(s => s.id === existingId)) throw new Error('订阅不存在');
+  const existing = (base.subscriptions || []).find(s => s.id === existingId);
+  if (existingId && !existing) throw new Error('订阅不存在');
   const id = existingId || randomBytes(8).toString('hex');
-  const previousSource = (state.subscriptions || []).find(s => s.id === id && s.url === url);
-  const sub = { id, url, certificatePolicy: previousSource?.certificatePolicy, name: displayName || (state.subscriptions || []).find(s => s.id === id)?.name || new URL(url).hostname, updatedAt: Date.now(), count: parsed.nodes.length, skipped: parsed.skipped, usage: fetched.usage, usageUpdatedAt: Date.now(), allowInsecure: (state.subscriptions || []).some(s => s.id === id && s.url === url && s.allowInsecure === true) };
-  const legacy = nodeManager.legacyCandidateIds(state, sub);
-  const previous = state;
-  const next = nodeManager.replaceSubscription(state, parsed, sub);
+  const previousSource = existing?.url === url ? existing : null;
+  const sub = { id, url, certificatePolicy: previousSource?.certificatePolicy, name: displayName || existing?.name || new URL(url).hostname, updatedAt: Date.now(), count: parsed.nodes.length, skipped: parsed.skipped, usage, usageUpdatedAt: Date.now(), allowInsecure: previousSource?.allowInsecure === true };
+  const legacy = nodeManager.legacyCandidateIds(base, sub);
+  const next = nodeManager.replaceSubscription(base, parsed, sub);
   // An old HTTPS-proxy placeholder may itself be the active manual node.
   if (!session.connected && legacy.includes(next.selectedNodeId)) next.selectedNodeId = next.nodes.find(n => n.subscriptionId === id)?.id || null;
+  return {
+    state: next,
+    report: { subscriptionId: id, imported: parsed.nodes.length, total: parsed.total, skipped: parsed.skipped, information: parsed.information?.length || 0, failures: parsed.failures, secureOverrides: parsed.secureOverrides },
+    message: `订阅共 ${parsed.total} 个节点：${parsed.nodes.length} 个可选，${parsed.skipped} 个不兼容；证书策略：${sub.certificatePolicy !== 'strict' && (sub.allowInsecure || base.settings.honorImportedInsecure !== false) ? '按节点显式参数连接' : '严格校验'}`
+  };
+}
+async function commitImport(next, report) {
+  const previous = state;
   state = next;
   try { await save(); } catch (e) { state = previous; throw e; }
-  importReport = { subscriptionId: id, imported: parsed.nodes.length, total: parsed.total, skipped: parsed.skipped, information: parsed.information?.length || 0, failures: parsed.failures, secureOverrides: parsed.secureOverrides };
-  log(`订阅共 ${parsed.total} 个节点：${parsed.nodes.length} 个可选，${parsed.skipped} 个不兼容；证书策略：${sub.certificatePolicy !== 'strict' && (sub.allowInsecure || state.settings.honorImportedInsecure !== false) ? '按节点显式参数连接' : '严格校验'}`);
+  importReport = report;
+}
+async function importLinks(payload) {
+  const entries = subscriptionApi.prepareImportLinks(payload, state.subscriptions);
+  const prepared = entries.map(entry => {
+    if (entry.kind === 'subscription') return { ...entry, existingId: (state.subscriptions || []).find(sub => sub.url === entry.url)?.id };
+    try { return { ...entry, node: api.parseLink(entry.link) }; }
+    catch { throw new Error(`第 ${entry.lineNumber} 行：节点链接不受支持或参数无效`); }
+  });
+  for (const entry of prepared) {
+    if (entry.kind !== 'subscription') continue;
+    try { entry.downloaded = await readSubscription(entry.url); }
+    catch (error) { throw new Error(`第 ${entry.lineNumber} 行：${errorText(error)}`); }
+  }
+
+  let next = state, manualCount = 0;
+  const report = { imported: 0, total: 0, skipped: 0, information: 0, failures: {}, secureOverrides: 0, subscriptionIds: [] };
+  const messages = [];
+  for (const entry of prepared) {
+    if (entry.kind === 'node') {
+      const { node } = entry;
+      next = { ...next, nodes: [...next.nodes, node], selectedNodeId: next.selectedNodeId || node.id };
+      manualCount++;
+      report.imported++;
+      report.total++;
+      if (node.insecureRequested) report.secureOverrides++;
+      continue;
+    }
+    const staged = stageSubscription(next, entry.url, entry.existingId, entry.name, entry.downloaded);
+    next = staged.state;
+    report.subscriptionIds.push(staged.report.subscriptionId);
+    for (const key of ['imported', 'total', 'skipped', 'information', 'secureOverrides']) report[key] += staged.report[key];
+    for (const [reason, count] of Object.entries(staged.report.failures)) report.failures[reason] = (report.failures[reason] || 0) + count;
+    messages.push(staged.message);
+  }
+  if (report.subscriptionIds.length) report.subscriptionId = report.subscriptionIds[0];
+  await commitImport(next, report);
+  if (manualCount) log(`已导入 ${manualCount} 个独立节点`);
+  for (const message of messages) log(message);
 }
 async function handle(method, payload) {
   if (method === 'checkForUpdates') {
@@ -205,28 +278,22 @@ async function handle(method, payload) {
     else if (method === 'connect') await start();
     else if (method === 'disconnect') { await stop(); log('已断开连接，系统代理已恢复'); }
     else if (method === 'import') {
-      const content = typeof payload === 'string' ? payload : payload?.content;
-      const displayName = typeof payload?.name === 'string' ? payload.name.replace(/[\r\n\t]/g, ' ').trim().slice(0, 120) : '';
-      if (typeof content !== 'string' || content.length > 262144) throw new Error('导入内容无效或过长');
-      const lines = content.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-      if (!lines.length || lines.length > 100) throw new Error('每次可导入 1–100 条链接');
-      if (lines.length === 1 && (payload?.kind === 'subscription' || subscriptionApi.isSubscriptionUrl(lines[0]))) {
-        const existing = (state.subscriptions || []).find(s => s.url === lines[0]);
-        await importSubscription(lines[0], existing?.id, displayName);
-      } else {
-        const parsed = lines.map((line, i) => { try { return api.parseLink(line); } catch (e) { throw new Error(`第 ${i + 1} 行：${errorText(e)}`); } });
-        state.nodes.push(...parsed);
-        state.selectedNodeId ||= parsed[0].id;
-        importReport = { imported: parsed.length, skipped: 0, failures: {}, secureOverrides: parsed.filter(n => n.insecureRequested).length };
-        await save(); log(`已导入 ${parsed.length} 个节点`);
-      }
+      await importLinks(payload);
     } else if (method === 'editNode') {
-      if (testProgress.running) throw new Error('请先停止测速再编辑节点');
-      const edited = sourceEdits.editNode(state, payload);
-      if (session.connected && edited.connectionChanged) throw new Error('请先断开连接再修改连接参数');
+      const edited = sourceEdits.editNode(state, payload, { testing: testProgress.running });
+      const reconnect = edited.connectionChanged && session.connected && session.nodeId === payload.id;
       const previous = state;
       state = edited.state;
+      if (reconnect) state.selectedNodeId = payload.id;
       try { await save(); } catch (e) { state = previous; throw e; }
+      if (reconnect && session.connected) {
+        try {
+          await stop();
+          await start();
+        } catch {
+          throw new Error('节点参数已保存，但自动重连失败。请检查节点参数后重新连接');
+        }
+      }
     } else if (method === 'editSubscription') {
       const sub = (state.subscriptions || []).find(s => s.id === payload?.id);
       if (!sub) throw new Error('订阅不存在');
@@ -314,10 +381,12 @@ async function handle(method, payload) {
     } else if (method === 'dismissReport') {
       importReport = null;
     } else if (method === 'deleteNode') {
-      if (session.connected) throw new Error('请先断开连接再删除节点');
-      state.nodes = state.nodes.filter(n => n.id !== payload);
-      if (state.selectedNodeId === payload) state.selectedNodeId = state.nodes[0]?.id || null;
-      await save();
+      const previous = state;
+      state = nodeManager.removeManualNode(state, payload);
+      // The running core and session keep the configuration loaded at connection time.
+      if (state !== previous) {
+        try { await save(); } catch (error) { state = previous; throw error; }
+      }
     } else if (method === 'selectNode') {
       if (!state.nodes.some(n => n.id === payload)) throw new Error('节点不存在');
       if (state.selectedNodeId !== payload || (session.connected && session.nodeId && session.nodeId !== payload)) {
@@ -451,6 +520,11 @@ else {
     });
     createWindow();
     updateService.start();
+    usagePoller = createSubscriptionUsagePoller({
+      list: () => state.subscriptions || [], fetchUsage: fetchSubscriptionUsage, applyUsage: applyAutomaticUsage,
+      isBusy: () => busy || quitting
+    });
+    usagePoller.start();
     // Backend changes take effect only after a manual exit and launch.
     // Never restart a client that may be carrying the development network.
     log(global.coreReady ? '客户端就绪，等待连接' : '尚未安装内核，请运行 npm run core:download', global.coreReady ? 'info' : 'warn');
@@ -462,13 +536,14 @@ else {
         const stats = await controller('/connections');
         if (!session.connected) return;
         const now = Date.now(), elapsed = previousTotals ? (now - previousTotals.time) / 1000 : 1;
-        session = { ...session, upload: stats.uploadTotal || 0, download: stats.downloadTotal || 0, connections: stats.connections?.length || 0, upSpeed: previousTotals ? Math.max(0, (stats.uploadTotal - previousTotals.up) / elapsed) : 0, downSpeed: previousTotals ? Math.max(0, (stats.downloadTotal - previousTotals.down) / elapsed) : 0 };
+        session = { ...session, connections: stats.connections?.length || 0, upSpeed: previousTotals ? Math.max(0, (stats.uploadTotal - previousTotals.up) / elapsed) : 0, downSpeed: previousTotals ? Math.max(0, (stats.downloadTotal - previousTotals.down) / elapsed) : 0 };
         previousTotals = { time: now, up: stats.uploadTotal || 0, down: stats.downloadTotal || 0 }; broadcast();
-      } catch { /* Keep last actual totals; never fabricate traffic. */ }
+      } catch { /* Retain the last measured rates. */ }
       finally { polling = false; }
     }, 1500).unref();
   }).catch(e => { dialog.showErrorBox('SuperVPN 启动失败', errorText(e)); app.exit(1); });
   app.on('before-quit', e => {
+    usagePoller?.dispose();
     if (quitting) return;
     e.preventDefault(); quitting = true;
     testAbort?.abort(); speedAbort?.abort();

@@ -24,9 +24,3 @@ export function sourceScope(data, group) {
   if (!group.startsWith('node:')) return { state: data, group };
   return { state: { ...data, nodes: data.nodes.filter(n => !n.subscriptionId && nodeSourceGroup(n.id) === group), informationNodes: [], unsupportedNodes: [] }, group: 'manual' };
 }
-export function prepareManualLinks(content, name) {
-  const label = name.replace(/[\r\n\t]/g, ' ').trim().slice(0, 120);
-  if (!label) return content;
-  const lines = content.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-  return lines.map((line, i) => `${line.split('#')[0]}#${encodeURIComponent(lines.length === 1 ? label : `${label} · ${i + 1}`)}`).join('\n');
-}

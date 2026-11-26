@@ -12,12 +12,13 @@ function Delay({ check }) {
   const description = check.measurement === 'warm' ? `HTTPS 统一延迟 · 完整连接 ${check.coldDelayMs} ms · ${check.connectionReused ? '复用目标连接' : '目标重新建连'}` : check.measurement === 'cold' ? '预热后探测未完成，显示首次完整连接耗时' : '旧版完整连接耗时，请重新测速';
   return <span className={`node-delay ${check.delayMs < 500 ? 'fast' : check.delayMs < 1500 ? 'medium' : 'slow'}`} title={`${description} · ${new Date(check.checkedAt).toLocaleTimeString('zh-CN')}`}>{Math.round(check.delayMs)} <small>ms</small></span>;
 }
-export default function NodeManager({ data, pendingNodeId = null, preferredGroup, busy, onAction, onImport, onDeleteNode, onEdit }) {
+export default function NodeManager({ data, pendingNodeId = null, preferredGroup, busy, onAction, onImport, onEdit }) {
   const selection = displayedNodeId(data, pendingNodeId);
   const group = selectedSource(data, preferredGroup);
   const [hideUnavailable, setHideUnavailable] = useState(() => { try { return globalThis.window?.localStorage.getItem('supervpn.hideUnavailable') === 'true'; } catch { return false; } });
   useEffect(() => { try { globalThis.window?.localStorage.setItem('supervpn.hideUnavailable', String(hideUnavailable)); } catch { /* A restricted storage policy must not break the view. */ } }, [hideUnavailable]);
   const progress = data.testProgress || {}, connected = data.session.connected;
+  const deleteLocked = busy || (connected && data.environment?.connectedNodeDeletion !== true);
   const scope = sourceScope(data, group);
   const allItems = visibleNodeItems(scope.state, { group: scope.group, sort: 'original' }).filter(n => !n.informational);
   const sections = nodeSections(data, allItems, hideUnavailable);
@@ -34,7 +35,7 @@ export default function NodeManager({ data, pendingNodeId = null, preferredGroup
           <span className={`node-choice ${chosen ? 'chosen' : ''}`} aria-hidden="true">{chosen && <Check size={12}/>}</span>
         </button>
         {!n.unsupported && <button className="node-edit icon-button" aria-label={`编辑 ${n.name}`} title="编辑节点信息" disabled={busy || progress.running} onClick={() => onEdit({ kind: 'node', item: n })}><Pencil size={13}/></button>}
-        {!n.subscriptionId && <button className="manual-node-delete icon-button danger" aria-label={`删除 ${n.name}`} disabled={busy || connected} onClick={() => onDeleteNode(n)}><Trash2 size={12}/></button>}
+        {!n.subscriptionId && <button className="manual-node-delete icon-button danger" aria-label={`删除 ${n.name}`} disabled={deleteLocked} onClick={() => onAction('deleteNode', n.id)}><Trash2 size={12}/></button>}
       </div>;
     })}</div>}</section>)}</div>}
     {progress.running && <div className="node-selection-footer" role="status"><small>{progress.completed} / {progress.total} 已测</small></div>}

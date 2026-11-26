@@ -1,10 +1,11 @@
 import { defaultState, parseLink } from '../shared/proxy.js';
-import { isSubscriptionUrl } from '../shared/subscription.js';
+import { prepareImportLinks } from '../shared/subscription.js';
+import { removeManualNode } from '../shared/node-manager.js';
 import { editNode } from '../shared/source-edits.js';
 import { validateSystemMode } from '../shared/connection-mode.js';
 import { setWebsiteRule, removeWebsiteRule } from '../shared/website-rules.js';
 import { seedDomesticWebsiteRules } from '../shared/default-website-rules.js';
-let preview = { ...seedDomesticWebsiteRules(defaultState()), session: { connected: false, startedAt: null, upload: 0, download: 0, upSpeed: 0, downSpeed: 0, connections: 0 }, logs: [], environment: { desktop: false, admin: false, coreReady: false, version: '0.6.5' }, busy: false };
+let preview = { ...seedDomesticWebsiteRules(defaultState()), session: { connected: false, startedAt: null, upSpeed: 0, downSpeed: 0, connections: 0 }, logs: [], environment: { desktop: false, admin: false, coreReady: false, version: '0.6.6' }, busy: false };
 // Browser preview is intentionally ephemeral: no credentials in localStorage.
 export const bridge = globalThis.window?.supervpn || {
   onUpdate: () => () => {},
@@ -15,18 +16,18 @@ export const bridge = globalThis.window?.supervpn || {
     if (method === 'connect') throw new Error('当前是界面预览，不能接管网络。请运行 Windows 桌面客户端进行连接');
     if (method === 'disconnect') return structuredClone(preview);
     if (method === 'import') {
-      const content = typeof p === 'string' ? p : p.content;
-      if (p?.kind === 'subscription' || isSubscriptionUrl(content)) throw new Error('请在 Windows 桌面客户端中导入订阅，预览不请求订阅服务器');
-      const lines = content.split(/\r?\n/).filter(s => s.trim());
-      if (!lines.length || lines.length > 100) throw new Error('每次可导入 1–100 条链接');
-      const parsed = lines.map(parseLink);
+      const entries = prepareImportLinks(p);
+      if (entries.some(entry => entry.kind === 'subscription')) throw new Error('请在 Windows 桌面客户端中导入订阅，预览不请求订阅服务器');
+      const parsed = entries.map(({ link, lineNumber }) => {
+        try { return parseLink(link); } catch { throw new Error(`第 ${lineNumber} 行：节点链接不受支持或参数无效`); }
+      });
       preview.nodes.push(...parsed); preview.selectedNodeId ||= parsed[0].id;
       preview.importReport = { imported: parsed.length, total: parsed.length, skipped: 0, failures: {}, secureOverrides: parsed.filter(n => n.insecureRequested).length };
     }
     if (method === 'editNode') preview = editNode(preview, p).state;
     if (method === 'editSubscription' || method === 'refreshSubscriptionUsage') throw new Error('订阅编辑与流量更新仅在 Windows 桌面客户端中可用');
     if (method === 'selectNode') preview.selectedNodeId = p;
-    if (method === 'deleteNode') { preview.nodes = preview.nodes.filter(n => n.id !== p); if (preview.selectedNodeId === p) preview.selectedNodeId = preview.nodes[0]?.id || null; }
+    if (method === 'deleteNode') preview = removeManualNode(preview, p);
     if (method === 'testNodes') throw new Error('真实延迟测试仅在桌面客户端中可用');
     if (method === 'subscriptionSecurity') throw new Error('证书策略仅在 Windows 桌面客户端中可用');
     if (method === 'mode') preview.mode = validateSystemMode(p);
