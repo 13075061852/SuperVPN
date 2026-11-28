@@ -26,6 +26,7 @@ test('persisted migration happens before creating the window or any startup auto
   const source = await fs.readFile('electron/main.cjs', 'utf8');
   const startup = source.slice(source.indexOf('app.whenReady().then'));
   assert.ok(startup.indexOf('connectionMode.systemProxyState(state); await save()') < startup.indexOf('createWindow();'));
+  assert.ok(startup.indexOf("state.settings?.defaultAction !== 'proxy'") < startup.indexOf('createWindow();'));
   assert.ok(source.includes('connectionMode.validateSystemMode(payload)'));
   assert.equal(source.includes('TUN 全局接管需要管理员权限'), false);
   const start = source.slice(source.indexOf('async function start()'), source.indexOf('async function start()') + 600);

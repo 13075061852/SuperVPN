@@ -1,13 +1,24 @@
 import React, { useState } from 'react';
 import { Plus, Trash2, ExternalLink } from 'lucide-react';
 import { normalizeDomain } from '../shared/website-rules.js';
+const actionLabels = { proxy: '代理', direct: '直连', reject: '拦截' };
 export default function WebsiteRouting({ data, busy, onAction }) {
   const [domain, setDomain] = useState(''), [action, setAction] = useState('direct'), [error, setError] = useState('');
   const supported = !data.environment.desktop || data.environment.websiteRouting === true;
   const legacyConnected = data.session.connected && data.environment.desktop && !data.environment.connectedEditing;
   const locked = busy || legacyConnected || !supported;
   const rules = data.websiteRules || [];
+  const activeRules = rules.filter(rule => rule.enabled !== false);
+  const outboundMode = data.settings?.outboundMode || 'rule';
+  const modeLabel = outboundMode === 'global' ? '全局' : outboundMode === 'direct' ? '直连' : '规则';
   const hint = !supported || legacyConnected ? '网站规则接口下次正常启动后可用' : '域名及其子域名；保存后下次连接生效';
+  const statusHint = !supported || legacyConnected
+    ? hint
+    : outboundMode !== 'rule'
+      ? (data.session.connected ? `当前为${modeLabel}模式，切换到规则模式后生效；保存后下次连接生效` : '切换到规则模式后生效')
+      : data.session.connected
+        ? '保存后下次连接生效'
+        : '包含子域名 · 网站优先于程序规则';
   async function add(event) {
     event.preventDefault(); if (locked) return;
     try {
@@ -23,15 +34,21 @@ export default function WebsiteRouting({ data, busy, onAction }) {
       <button type="submit" className="button primary" disabled={locked || !domain.trim()} title={hint}><Plus size={14} aria-hidden="true"/>添加</button>
     </form>
     {error && <p className="form-error" role="alert">{error}</p>}
-    <p className="website-rule-hint">{!supported || legacyConnected ? hint : data.session.connected ? '保存后下次连接生效' : (data.settings.outboundMode || 'rule') !== 'rule' ? '切换到规则模式后生效' : '包含子域名 · 网站优先于程序规则'}</p>
+    <p className={`website-rule-hint${outboundMode !== 'rule' && supported && !legacyConnected ? ' is-warning' : ''}`}>{statusHint}</p>
     <div className="website-rule-list" tabIndex={0} aria-label="已配置网站">
-      {rules.map(rule => <div className="website-rule-row" key={rule.id}>
-        <button className={`toggle ${rule.enabled !== false ? 'on' : ''}`} role="switch" aria-label={`启用 ${rule.domain} 网站规则`} aria-checked={rule.enabled !== false} disabled={locked} title={hint} onClick={() => onAction('setWebsiteRule', { domain: rule.domain, action: rule.action, enabled: rule.enabled === false })}><span/></button>
-        <strong title={rule.domain}>{rule.domain}</strong>
-        <select className="program-rule" data-action={rule.action} aria-label={`${rule.domain} 网站规则`} title={hint} disabled={locked} value={rule.action} onChange={e => onAction('setWebsiteRule', { domain: rule.domain, action: e.target.value })}><option value="proxy">代理</option><option value="direct">直连</option><option value="reject">拦截</option></select>
-        <button type="button" className="icon-button" aria-label={`在默认浏览器打开 ${rule.domain}`} title={data.environment.websiteOpening ? `在默认浏览器打开 https://${rule.domain}/` : data.environment.desktop ? '下次正常启动后可用' : '请在桌面客户端中使用默认浏览器打开'} disabled={busy || !data.environment.websiteOpening} onClick={() => onAction('openWebsite', rule.id)}><ExternalLink size={15} aria-hidden="true"/></button>
-        <button className="icon-button danger" aria-label={`删除 ${rule.domain} 网站规则`} title={hint} disabled={locked} onClick={() => onAction('deleteWebsiteRule', rule.id)}><Trash2 size={15} aria-hidden="true"/></button>
-      </div>)}
+      {rules.map(rule => {
+        const overrides = rule.enabled === false ? [] : activeRules.filter(other => other.action !== rule.action && other.domain.endsWith(`.${rule.domain}`));
+        return <div className="website-rule-row" key={rule.id}>
+          <button className={`toggle ${rule.enabled !== false ? 'on' : ''}`} role="switch" aria-label={`启用 ${rule.domain} 网站规则`} aria-checked={rule.enabled !== false} disabled={locked} title={hint} onClick={() => onAction('setWebsiteRule', { domain: rule.domain, action: rule.action, enabled: rule.enabled === false })}><span/></button>
+          <div className="website-rule-domain">
+            <strong title={rule.domain}>{rule.domain}</strong>
+            {overrides.length > 0 && <small className="website-rule-override" title={overrides.map(item => `${item.domain}（${actionLabels[item.action]}）`).join('、')}>子域名 {overrides[0].domain}{overrides.length > 1 ? ` 等 ${overrides.length} 项` : ''} 优先（{actionLabels[overrides[0].action]}）</small>}
+          </div>
+          <select className="program-rule" data-action={rule.action} aria-label={`${rule.domain} 网站规则`} title={hint} disabled={locked} value={rule.action} onChange={e => onAction('setWebsiteRule', { domain: rule.domain, action: e.target.value })}><option value="proxy">代理</option><option value="direct">直连</option><option value="reject">拦截</option></select>
+          <button type="button" className="icon-button" aria-label={`在默认浏览器打开 ${rule.domain}`} title={data.environment.websiteOpening ? `在默认浏览器打开 https://${rule.domain}/` : data.environment.desktop ? '下次正常启动后可用' : '请在桌面客户端中使用默认浏览器打开'} disabled={busy || !data.environment.websiteOpening} onClick={() => onAction('openWebsite', rule.id)}><ExternalLink size={15} aria-hidden="true"/></button>
+          <button className="icon-button danger" aria-label={`删除 ${rule.domain} 网站规则`} title={hint} disabled={locked} onClick={() => onAction('deleteWebsiteRule', rule.id)}><Trash2 size={15} aria-hidden="true"/></button>
+        </div>;
+      })}
       {!rules.length && <div className="empty-state"><p>还没有网站规则</p></div>}
     </div>
   </section>;

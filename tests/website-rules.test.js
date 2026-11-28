@@ -12,7 +12,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
 import react from '@vitejs/plugin-react';
 import { normalizeDomain, setWebsiteRule, removeWebsiteRule, websiteRuleList } from '../shared/website-rules.js';
-import { defaultState, parseLink, createConfig } from '../shared/proxy.js';
+import { defaultState, parseLink, createConfig, processPathRegex } from '../shared/proxy.js';
 
 test('website inputs normalize URLs, IDN and suffixes but reject secrets, IPs and invalid patterns', () => {
   assert.equal(normalizeDomain('  *.Example.COM. '), 'example.com');
@@ -41,7 +41,7 @@ test('specific website routes override broader websites and program rules only i
   state = setWebsiteRule(state, { domain: 'disabled.test', action: 'direct', enabled: false });
   for (const mode of ['rule', 'global', 'direct']) {
     const config = createConfig({ ...state, settings: { ...state.settings, outboundMode: mode } });
-    const routes = config.route.rules, specific = routes.findIndex(rule => rule.domain_suffix?.includes('private.example.com')), broad = routes.findIndex(rule => rule.domain_suffix?.includes('example.com')), program = routes.findIndex(rule => rule.process_name?.includes('browser.exe'));
+    const routes = config.route.rules, specific = routes.findIndex(rule => rule.domain_suffix?.includes('private.example.com')), broad = routes.findIndex(rule => rule.domain_suffix?.includes('example.com')), program = routes.findIndex(rule => rule.process_path_regex?.includes(processPathRegex('browser.exe')));
     assert.ok(specific < broad && broad < program); assert.equal(routes[specific].clash_mode, 'Rule'); assert.equal(routes[specific].outbound, 'direct');
     assert.ok(routes.some(rule => rule.domain_suffix?.includes('blocked.test') && rule.action === 'reject'));
     assert.equal(routes.some(rule => rule.domain_suffix?.includes('disabled.test')), false);
@@ -82,6 +82,34 @@ test('real sing-box routes two websites differently in the same client and block
     assert.equal(await request('localhost').catch(error => { throw new Error(`${error.message}\n${logs}`); }), 'direct-website', logs); assert.equal(targets.length, 0);
     assert.equal(await request('proxied.test'), 'proxy-website'); assert.ok(targets[0].startsWith('proxied.test:'));
     await assert.rejects(request('blocked.test')); assert.equal(targets.length, 1);
+    // Outer TLS ECH SNI must not override an already-known CONNECT domain (localhost stays direct).
+    const tlsHello = sni => {
+      const sniBuf = Buffer.from(sni, 'ascii');
+      const ext = Buffer.concat([Buffer.from([0x00, 0x00]), Buffer.alloc(2), Buffer.alloc(2), Buffer.from([0x00]), Buffer.alloc(2), sniBuf]);
+      ext.writeUInt16BE(sniBuf.length + 5, 2); ext.writeUInt16BE(sniBuf.length + 3, 4); ext.writeUInt16BE(sniBuf.length, 7);
+      const body = Buffer.concat([Buffer.from([0x03, 0x03]), Buffer.alloc(32, 1), Buffer.from([0x00, 0x00, 0x02, 0x13, 0x01, 0x01, 0x00]), Buffer.alloc(2), ext]);
+      body.writeUInt16BE(ext.length, body.length - ext.length - 2);
+      const hs = Buffer.concat([Buffer.from([0x01, (body.length >> 16) & 255, (body.length >> 8) & 255, body.length & 255]), body]);
+      return Buffer.concat([Buffer.from([0x16, 0x03, 0x01, (hs.length >> 8) & 255, hs.length & 255]), hs]);
+    };
+    const connectTls = (host, sni) => new Promise((resolve, reject) => {
+      const sock = net.connect(port, '127.0.0.1', () => sock.write(`CONNECT ${host}:${destinationPort} HTTP/1.1\r\nHost: ${host}:${destinationPort}\r\n\r\n`));
+      let buf = '', opened = false;
+      sock.on('data', chunk => {
+        buf += chunk.toString();
+        if (!opened && buf.includes('\r\n\r\n')) {
+          opened = true; sock.write(tlsHello(sni));
+          setTimeout(() => { sock.destroy(); resolve(); }, 200);
+        }
+      });
+      sock.on('error', () => resolve());
+      sock.setTimeout(2000, () => { sock.destroy(); reject(new Error('timeout')); });
+    });
+    await connectTls('localhost', 'cloudflare-ech.com');
+    assert.equal(targets.length, 1, 'direct CONNECT domain must not be overridden by ECH SNI');
+    // Raw IP CONNECT still sniffs TLS SNI and routes to proxy.
+    await connectTls('127.0.0.1', 'proxied.test');
+    assert.equal(targets.length, 2, 'raw IP CONNECT must still sniff TLS SNI');
   } finally {
     if (proc && proc.exitCode === null) await new Promise(resolve => { proc.once('exit', resolve); proc.kill(); });
     for (const socket of sockets) socket.destroy();
@@ -110,4 +138,47 @@ test('website UI enables connected deferred editing and protects older backends'
   data.environment.websiteOpening = false; html = render(WebsiteRouting);
   assert.match(html, /aria-label="在默认浏览器打开 example.com"[^>]*disabled/);
   data.session.connected = false; data.environment.websiteRouting = false; html = render(WebsiteRouting); assert.ok(html.includes('下次正常启动')); assert.match(html, /<input[^>]*disabled/);
+  // Connected non-rule mode must still warn that rules require Rule mode, and Routing must surface reconnectRequired.
+  data.environment.websiteRouting = true; data.session.connected = true; data.reconnectRequired = true; data.settings.outboundMode = 'global';
+  data.websiteRules = [{ id: 'sub', domain: 'tongyi.aliyun.com', action: 'direct', enabled: true }, { id: 'root', domain: 'aliyun.com', action: 'proxy', enabled: true }];
+  const routingHtml = render(Routing);
+  assert.ok(routingHtml.includes('设置已更改，需要重连后生效'));
+  assert.ok(routingHtml.includes('当前为全局模式，切换到规则模式后生效；保存后下次连接生效'));
+  assert.ok(routingHtml.includes('子域名 tongyi.aliyun.com 优先（直连）'));
+});
+test('real sing-box matches Windows program rules case-insensitively without touching system proxy', { skip: process.platform !== 'win32' || !existsSync('resources/core/sing-box.exe'), timeout: 15000 }, async () => {
+  const work = await fs.mkdtemp(path.join(os.tmpdir(), 'supervpn-prog-case-')), sockets = new Set();
+  const destination = http.createServer((_req, res) => res.end('direct-prog'));
+  const upstream = http.createServer();
+  for (const server of [destination, upstream]) server.on('connection', socket => { sockets.add(socket); socket.on('error', () => socket.destroy()); socket.on('close', () => sockets.delete(socket)); });
+  let proxyHits = 0, proc, logs = '';
+  upstream.on('connect', (_req, socket, head) => { proxyHits++; socket.write('HTTP/1.1 200 Connection Established\r\n\r\n'); const respond = () => socket.end('HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nproxy-prog'); if (head.length) respond(); else socket.once('data', respond); });
+  try {
+    const destinationPort = await listen(destination), upstreamPort = await listen(upstream), port = await freePort(), controllerPort = await freePort();
+    const node = parseLink(`http://127.0.0.1:${upstreamPort}`);
+    const state = { ...defaultState(), nodes: [node], selectedNodeId: node.id, rules: [{ id: 'p1', process: 'NoDe.ExE', action: 'direct', enabled: true }], settings: { ...defaultState().settings, mixedPort: port, bypassLan: false } };
+    const config = createConfig(state, { controllerPort, controllerSecret: 'test-only' });
+    config.dns.servers = [{ type: 'hosts', tag: 'bootstrap', predefined: { 'app.test': '127.0.0.1' } }, { type: 'hosts', tag: 'remote', predefined: { 'app.test': '127.0.0.1' } }];
+    const file = path.join(work, 'prog.json'); await fs.writeFile(file, JSON.stringify(config));
+    const core = path.resolve('resources/core/sing-box.exe'); execFileSync(core, ['check', '-c', file], { windowsHide: true });
+    proc = spawn(core, ['run', '-c', file], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    proc.stdout.on('data', chunk => logs += chunk); proc.stderr.on('data', chunk => logs += chunk);
+    let ready = false;
+    for (let i = 0; i < 40; i++) {
+      ready = await new Promise(resolve => { const socket = net.connect(port, '127.0.0.1'); const finish = value => { socket.destroy(); resolve(value); }; socket.once('connect', () => finish(true)); socket.once('error', () => finish(false)); });
+      if (ready) break; await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    assert.ok(ready, logs);
+    const body = await new Promise((resolve, reject) => {
+      const req = http.get({ hostname: '127.0.0.1', port, path: `http://app.test:${destinationPort}/`, headers: { Host: `app.test:${destinationPort}` }, agent: false }, res => { let text = ''; res.on('data', c => text += c); res.on('end', () => resolve(text)); res.on('error', reject); });
+      req.on('error', reject); req.setTimeout(3000, () => req.destroy(new Error('timeout')));
+    });
+    assert.equal(body, 'direct-prog', logs);
+    assert.equal(proxyHits, 0);
+  } finally {
+    if (proc && proc.exitCode === null) await new Promise(resolve => { proc.once('exit', resolve); proc.kill(); });
+    for (const socket of sockets) socket.destroy();
+    for (const server of [upstream, destination]) if (server.listening) await new Promise(resolve => server.close(resolve));
+    await fs.rm(work, { recursive: true, force: true });
+  }
 });

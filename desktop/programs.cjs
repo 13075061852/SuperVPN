@@ -24,6 +24,11 @@ function Add-App([string]$file,[string]$name,[string]$source,[bool]$running=$fal
   if($exe -match '^(unins\d*|uninstall|setup|updater?|crashpad_handler|svchost|conhost|dllhost|RuntimeBroker|WerFault)\.exe$'){return}
   if($source -eq 'running' -and $file.StartsWith($env:windir+'\',[StringComparison]::OrdinalIgnoreCase) -and $exe -notmatch '^(notepad|mspaint|calc|explorer|cmd|powershell|pwsh|WindowsTerminal)\.exe$'){return}
   if(![IO.File]::Exists($file)){return}
+  if($exe -notmatch '[*?]'){
+    $dir=[IO.Path]::GetDirectoryName($file)
+    $real=[IO.Directory]::GetFiles($dir,$exe)|Select-Object -First 1
+    if($real){$file=$real;$exe=[IO.Path]::GetFileName($file)}
+  }
   if(!$name){$name=[IO.Path]::GetFileNameWithoutExtension($file)}
   $items.Add([pscustomobject]@{path=$file;name=$name;source=$source;running=$running})
 }

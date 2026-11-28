@@ -1,6 +1,8 @@
 import { websiteRuleList } from './website-rules.js';
 const decode = (s) => { try { return decodeURIComponent(s); } catch { throw new Error('链接包含无效的编码'); } };
 const unbase64 = (s) => { try { return new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0))); } catch { throw new Error('无效的 Base64 认证信息'); } };
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export const processPathRegex = (processName) => `(?i)(?:^|[\\\\/])${escapeRegex(processName)}$`;
 
 export function parseLink(input) {
   let raw = input.trim();
@@ -115,7 +117,9 @@ export function createConfig(state, { controllerSecret = '', controllerPort = 19
   const port = state.settings.mixedPort;
   if (!Number.isInteger(port) || port < 1024 || port > 65535 || port === controllerPort) throw new Error('代理端口须为 1024–65535 且不可与控制端口相同');
   const rules = [
-    { action: 'sniff' },
+    // Only sniff when the inbound did not already supply a domain, so outer
+    // TLS ECH SNI (e.g. cloudflare-ech.com) cannot override the requested host.
+    { domain_regex: ['.+'], invert: true, action: 'sniff' },
     { protocol: 'dns', action: 'hijack-dns' },
     { inbound: ['tun-in'], process_name: ['sing-box.exe', 'SuperVPN.exe', 'electron.exe'], action: 'route', outbound: 'direct' }
   ];
@@ -128,16 +132,23 @@ export function createConfig(state, { controllerSecret = '', controllerPort = 19
   for (const rule of state.rules.filter(r => r.enabled)) {
     if (!/^[^\\/:*?"<>|\r\n]+\.exe$/i.test(rule.process)) throw new Error('程序名称必须是有效的 .exe 文件名');
     if (!['proxy', 'direct', 'reject'].includes(rule.action)) throw new Error('无效的分流动作');
-    rules.push(rule.action === 'reject' ? { clash_mode: 'Rule', process_name: [rule.process], action: 'reject' } : { clash_mode: 'Rule', process_name: [rule.process], action: 'route', outbound: rule.action });
+    // Match Windows executable names case-insensitively regardless of shortcut/registry casing.
+    const processMatcher = { clash_mode: 'Rule', process_path_regex: [processPathRegex(rule.process)] };
+    rules.push(rule.action === 'reject' ? { ...processMatcher, action: 'reject' } : { ...processMatcher, action: 'route', outbound: rule.action });
   }
   if (state.settings.bypassLan) rules.push({ ip_is_private: true, action: 'route', outbound: 'direct' });
   rules.push({ clash_mode: 'Direct', action: 'route', outbound: 'direct' }, { clash_mode: 'Global', action: 'route', outbound: 'proxy' });
   const inbound = state.mode === 'tun'
     ? { type: 'tun', tag: 'tun-in', interface_name: 'SuperVPN', address: ['172.19.0.1/30', 'fdfe:dcba:9876::1/126'], mtu: 1500, auto_route: true, strict_route: true, stack: 'mixed' }
     : { type: 'mixed', tag: 'mixed-in', listen: '127.0.0.1', listen_port: port };
+  // Use the OS resolver for direct lookups in system proxy mode so intranet/ISP DNS works
+  // even when external UDP/53 is restricted; keep explicit UDP bootstrap only for legacy TUN.
+  const bootstrapDns = state.mode === 'tun'
+    ? { type: 'udp', tag: 'bootstrap', server: '223.5.5.5' }
+    : { type: 'local', tag: 'bootstrap' };
   return {
     log: { level: 'info', timestamp: true },
-    dns: { servers: [{ type: 'udp', tag: 'bootstrap', server: '223.5.5.5' }, { type: 'https', tag: 'remote', server: '1.1.1.1', path: '/dns-query', detour: 'proxy' }], rules: [{ clash_mode: 'Direct', server: 'bootstrap' }, ...websites.filter(rule => rule.action !== 'reject').map(rule => ({ clash_mode: 'Rule', domain_suffix: [rule.domain], server: rule.action === 'direct' ? 'bootstrap' : 'remote' }))], final: 'remote', strategy: 'prefer_ipv4' },
+    dns: { servers: [bootstrapDns, { type: 'https', tag: 'remote', server: '1.1.1.1', path: '/dns-query', detour: 'proxy' }], rules: [{ clash_mode: 'Direct', server: 'bootstrap' }, ...websites.filter(rule => rule.action !== 'reject').map(rule => ({ clash_mode: 'Rule', domain_suffix: [rule.domain], server: rule.action === 'direct' ? 'bootstrap' : 'remote' }))], final: 'remote', strategy: 'prefer_ipv4' },
     inbounds: [inbound],
     outbounds: [{ ...effectiveOutbound(state, node), tag: 'proxy' }, { type: 'direct', tag: 'direct' }],
     route: { rules, auto_detect_interface: true, default_domain_resolver: 'bootstrap', final: state.settings.defaultAction === 'direct' ? 'direct' : 'proxy' },

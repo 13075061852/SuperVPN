@@ -657,11 +657,14 @@ main, .dashboard-page, .profiles-main { max-width: none; margin: 0; padding: 16p
 .website-rule-form input { flex: 1; min-width: 0; font-size: 12px; }
 .website-rule-form select { width: 86px; font-size: 12px; }
 .website-rule-hint { flex-shrink: 0; font-size: 11px; color: var(--muted); line-height: 1.5; }
+.website-rule-hint.is-warning { color: var(--warning); }
 .website-rule-list { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--line); border-radius: var(--component-radius); background: #fff; }
 .website-rule-list:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .website-rule-row { display: flex; align-items: center; gap: 12px; padding: 12px; min-height: 58px; }
 .website-rule-row + .website-rule-row { border-top: 1px solid #f0edf5; }
-.website-rule-row > strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
+.website-rule-domain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.website-rule-domain > strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
+.website-rule-override { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--warning); line-height: 1.4; }
 .website-rule-row .toggle { flex-shrink: 0; }
 .website-rule-list .empty-state { height: 100%; min-height: 140px; border: 0; background: none; }
 .program-routing { display: flex; flex-direction: column; gap: var(--module-gap); height: 100%; min-height: 0; }

@@ -147,9 +147,9 @@ test('one click starts the selected node test with explicit confirmation and sto
 test('terminal proxy UI shows current port, supports connected toggling, and never pretends browser preview can edit Windows', () => {
   const data = { ...defaultState(), settings: { ...defaultState().settings, mixedPort: 18888 }, session: { connected: true }, environment: { desktop: true } };
   const render = () => renderToStaticMarkup(React.createElement(TerminalProxySettings, { data, busy: false, onAction: noop }));
-  let html = render(); assert.ok(html.includes('http://127.0.0.1:18888')); assert.ok(html.includes('HTTP_PROXY / HTTPS_PROXY'));
+  let html = render(); assert.ok(html.includes('http://127.0.0.1:18888')); assert.ok(html.includes('HTTP_PROXY / HTTPS_PROXY')); assert.ok(html.includes('未启用（系统默认）'));
   assert.equal(html.includes('disabled'), false); assert.ok(html.includes('重启终端后生效'));
-  data.terminalProxy = { enabled: true, address: 'http://127.0.0.1:18888' }; html = render(); assert.ok(html.includes('aria-checked="true"')); assert.ok(html.includes('恢复原来的环境变量'));
+  data.terminalProxy = { enabled: true, address: 'http://127.0.0.1:18888' }; html = render(); assert.ok(html.includes('aria-checked="true"')); assert.ok(html.includes('恢复原来的环境变量')); assert.ok(html.includes('已启用'));
   data.environment.desktop = false; html = render(); assert.ok(html.includes('disabled')); assert.ok(html.includes('仅桌面端可设置'));
 });
 test('outbound choices stay enabled while connected, and only lock during a pending action', () => {
@@ -223,11 +223,12 @@ test('country flags use bundled SVGs for detected regions with an honest unknown
 test('outbound modes change actual core routing without deleting user rules', () => {
   const s = defaultState(); s.nodes = [parseLink('http://upstream.example:8080')]; s.selectedNodeId = s.nodes[0].id;
   s.rules = [{ process: 'example.exe', action: 'reject', enabled: true }];
-  assert.ok(createConfig(s).route.rules.some(r => r.process_name?.includes('example.exe')));
+  const expectedProcess = '(?i)(?:^|[\\\\/])example\\.exe$';
+  assert.ok(createConfig(s).route.rules.some(r => r.process_path_regex?.includes(expectedProcess)));
   s.settings.outboundMode = 'global'; s.settings.defaultAction = 'direct';
   const global = createConfig(s); assert.equal(global.experimental.clash_api.default_mode, 'Global');
   assert.ok(global.route.rules.some(r => r.clash_mode === 'Global' && r.outbound === 'proxy'));
-  assert.ok(global.route.rules.some(r => r.clash_mode === 'Rule' && r.process_name?.includes('example.exe')));
+  assert.ok(global.route.rules.some(r => r.clash_mode === 'Rule' && r.process_path_regex?.includes(expectedProcess)));
   s.settings.outboundMode = 'direct'; const direct = createConfig(s);
   assert.equal(direct.experimental.clash_api.default_mode, 'Direct');
   assert.ok(direct.route.rules.some(r => r.clash_mode === 'Direct' && r.outbound === 'direct'));

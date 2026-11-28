@@ -7,7 +7,7 @@ import { createRequire } from 'node:module';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
-const { toggleTerminalProxy, terminalProxyView } = api;
+const { toggleTerminalProxy, terminalProxyView, reconcileTerminalProxy } = api;
 function fixture(values) {
   let environment = structuredClone(values), backup = null;
   const events = [];
@@ -80,4 +80,37 @@ test('safe view contains no original proxy credentials and validates requested p
   const backup = { owned: 'http://127.0.0.1:17890', values: { HTTP_PROXY: { value: 'http://user:secret@example.test:8080' } } };
   assert.deepEqual(terminalProxyView(backup, 17890), { enabled: true, address: 'http://127.0.0.1:17890' });
   for (const [enabled, port] of [['true', 17890], [true, 0], [true, 65536]]) await assert.rejects(() => toggleTerminalProxy({ enabled, port }), /无效/);
+});
+test('disabling clears self-poisoned backups, leftover owned vars without backup, and ExpandString owned copies', async () => {
+  const owned = { HTTP_PROXY: { exists: true, value: 'http://127.0.0.1:17890', kind: 'String' }, HTTPS_PROXY: { exists: true, value: 'http://127.0.0.1:17890', kind: 'String' } };
+  // 1. Turning on when 17890 is already in HKCU must not back up 17890 as original; turning off must clear to system default.
+  const f1 = fixture(owned);
+  await f1.toggle(true);
+  assert.deepEqual(f1.backup().values, missing());
+  await f1.toggle(false);
+  assert.deepEqual(f1.current(), missing()); assert.equal(f1.backup(), null);
+  // 2. An already-poisoned backup saved by an older version still restores to system default when disabled.
+  const f2 = fixture(owned);
+  await toggleTerminalProxy({ enabled: false, port: 17890, backup: { owned: 'http://127.0.0.1:17890', values: structuredClone(owned) }, ...f2.io });
+  assert.deepEqual(f2.current(), missing()); assert.equal(f2.backup(), null);
+  // 3. Disabling even with no backup still removes leftover SuperVPN 17890 entries without touching unrelated vars.
+  const f3 = fixture({ HTTP_PROXY: owned.HTTP_PROXY, HTTPS_PROXY: { exists: true, value: 'http://other.example:8080', kind: 'String' } });
+  await toggleTerminalProxy({ enabled: false, port: 17890, backup: null, ...f3.io });
+  assert.deepEqual(f3.current(), { HTTP_PROXY: { exists: false }, HTTPS_PROXY: { exists: true, value: 'http://other.example:8080', kind: 'String' } });
+  // 4. Windows GUI re-saving owned value as ExpandString does not block restoration.
+  const f4 = fixture(missing()); await f4.toggle(true);
+  await f4.io.write({ HTTP_PROXY: { exists: true, value: 'http://127.0.0.1:17890/', kind: 'ExpandString' }, HTTPS_PROXY: owned.HTTPS_PROXY });
+  await f4.toggle(false);
+  assert.deepEqual(f4.current(), missing()); assert.equal(f4.backup(), null);
+});
+test('startup reconciliation aligns saved terminalProxyBackup with real Windows environment state', () => {
+  const owned = { HTTP_PROXY: { exists: true, value: 'http://127.0.0.1:17890', kind: 'String' }, HTTPS_PROXY: { exists: true, value: 'http://127.0.0.1:17890', kind: 'String' } };
+  const adopted = reconcileTerminalProxy(undefined, owned, 17890);
+  assert.equal(adopted.changed, true); assert.deepEqual(adopted.backup, { owned: 'http://127.0.0.1:17890', values: missing() });
+  const sanitized = reconcileTerminalProxy({ owned: 'http://127.0.0.1:17890', values: owned }, owned, 17890);
+  assert.equal(sanitized.changed, true); assert.deepEqual(sanitized.backup.values, missing());
+  const cleared = reconcileTerminalProxy({ owned: 'http://127.0.0.1:17890', values: missing() }, missing(), 17890);
+  assert.equal(cleared.changed, true); assert.equal(cleared.backup, null);
+  const steady = reconcileTerminalProxy(undefined, missing(), 17890);
+  assert.equal(steady.changed, false); assert.equal(steady.backup, null);
 });

@@ -11,7 +11,7 @@ const { fetchSubscription } = require('../desktop/subscription-fetch.cjs');
 const { testLatency, getTestConcurrency } = require('./latency.cjs');
 const { inspectNetwork } = require('./network-info.cjs');
 const { applyCoreMode, changeLiveMode } = require('./outbound-mode.cjs');
-const { toggleTerminalProxy, terminalProxyView } = require('./terminal-proxy.cjs');
+const { toggleTerminalProxy, terminalProxyView, reconcileTerminalProxy } = require('./terminal-proxy.cjs');
 const { windowLayout } = require('./window-layout.cjs');
 const { windowState, setAlwaysOnTop } = require('../desktop/window-controls.cjs');
 const { scanPrograms } = require('../desktop/programs.cjs');
@@ -485,6 +485,12 @@ else {
     if (seeded !== state) { state = seeded; await save(); }
     connectionMode = await import(pathToFileURL(path.join(__dirname, '../shared/connection-mode.js')).href);
     if (state.mode !== 'system') { state = connectionMode.systemProxyState(state); await save(); }
+    // Desktop UI removed defaultAction in favor of outboundMode; reset any legacy
+    // saved 'direct' fallback so Rule mode reliably routes unmatched traffic via proxy.
+    if (state.settings?.defaultAction !== 'proxy') {
+      state = { ...state, settings: { ...state.settings, defaultAction: 'proxy' } };
+      await save();
+    }
     if (state.settings.honorImportedInsecure === undefined) {
       state.settings = { ...state.settings, honorImportedInsecure: true };
       const changed = new Set(state.nodes.filter(n => n.insecureRequested && !state.subscriptions.some(s => s.id === n.subscriptionId && (s.allowInsecure || s.certificatePolicy === 'strict'))).map(n => n.id));
@@ -495,6 +501,13 @@ else {
     // as the new unified metric after upgrading. Keep current/failure results.
     state.nodeChecks = Object.fromEntries(Object.entries(state.nodeChecks || {}).filter(([, check]) => check.status !== 'ok' || ['warm', 'cold'].includes(check.measurement)));
     await recoverProxy();
+    try {
+      const synced = reconcileTerminalProxy(state.terminalProxyBackup, await win.readUserProxyEnvironment(), state.settings.mixedPort);
+      if (synced.changed) {
+        if (synced.backup) state.terminalProxyBackup = synced.backup; else delete state.terminalProxyBackup;
+        await save();
+      }
+    } catch { /* Do not block startup if user environment registry is unreadable. */ }
     // Runtime configuration contains credentials; delete only our stale runtime files.
     for (const file of await fs.readdir(app.getPath('userData'))) if (/^runtime-\d+(?:-check(?:-[0-3])?|-speed)?\.json$/.test(file)) await fs.rm(dataPath(file), { force: true });
     admin = await win.isAdmin();

@@ -15,6 +15,8 @@ export default function ProgramRouting({ data, busy, onAction, embedded = false 
   }
   useEffect(() => { scan(); }, [supported]);
   const { rows, counts } = programView({ programs: result?.programs || [], rules: data.rules, query, filter });
+  const outboundMode = data.settings?.outboundMode || 'rule';
+  const modeLabel = outboundMode === 'global' ? '全局' : outboundMode === 'direct' ? '直连' : '规则';
   const editHint = locked && !busy ? '下次正常启动后支持连接中编辑' : '同名 exe 共用规则，修改后下次连接生效';
   return <div className="program-routing">
     {!embedded && <header className="page-header"><h1>分流控制</h1></header>}
@@ -23,6 +25,7 @@ export default function ProgramRouting({ data, busy, onAction, embedded = false 
       <label className="program-search"><Search size={16} aria-hidden="true"/><input aria-label="搜索系统程序" placeholder="搜索程序或 .exe" value={query} onChange={e => setQuery(e.target.value)}/></label>
       <div className="program-filter-bar"><div className="program-filters" role="group" aria-label="程序筛选">{[{ id: 'all', label: '全部' }, { id: 'running', label: '运行中' }, { id: 'configured', label: '已配置' }].map(item => <button key={item.id} aria-pressed={filter === item.id} onClick={() => setFilter(item.id)}>{item.label}<span>{counts[item.id]}</span></button>)}</div>{query && <span className="program-result-count">{rows.length} 项匹配</span>}</div>
     </div>
+    <p className={`website-rule-hint${outboundMode !== 'rule' ? ' is-warning' : ''}`}>{outboundMode !== 'rule' ? `当前为${modeLabel}模式，切换到规则模式后生效` : '仅控制走系统代理的程序 · 网站规则优先于程序规则'}</p>
     {error && <p className="form-error" role="alert">{error}</p>}
     {result?.partial && <p className="routing-notice">已达到识别上限，仅显示已识别的程序。</p>}
     <div className="program-table">
