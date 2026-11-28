@@ -1,0 +1,1 @@
+# SuperVPN Android release rules

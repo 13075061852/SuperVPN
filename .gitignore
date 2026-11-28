@@ -13,3 +13,10 @@ proxy-recovery.json
 *.pfx
 *.p12
 *.pem
+android/.gradle/
+android/build/
+android/app/build/
+android/app/libs/libbox.aar
+android/local.properties
+android/keystore.properties
+android/keystore/*.jks

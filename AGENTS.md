@@ -24,6 +24,7 @@
 - 同步 `package.json`、`package-lock.json` 和预览版本；已发布版本不覆盖，先查询 Release 是否存在。
 - 必须通过完整测试、构建和 `scripts/verify-release.mjs`；保留 SHA-512、blockmap、对应 sing-box 源码及许可证，不用跳过测试换速度。
 - 本地 `npm run dist` 在临时目录构建并校验后，只保留最新安装包；CI 使用 `npm run dist:ci`，保留 EXE、blockmap、`latest.yml` 和源码供 GitHub 发布。不得在 CI 使用会清理更新资产的本地包装脚本。
+- 安卓本地打包校验通过后，将新版 APK 复制到 `output/android/` 并删除同目录下旧版 APK，只保留最新安装包（构建或校验失败时保留上一可用安装包）。
 - 不强删锁定的 `release/win-unpacked`，不杀进程；保留并说明。失败时保留上一可用安装包，不删除用户资料。
 - 发布成功以 GitHub Release 非草稿、版本正确且四类资产齐全为准；确认后立即提供下载链接，不等无关收尾，也不把工作流启动当发布完成。
 - 更新可以自动检查/下载，安装必须由用户点击确认；普通退出不得自动安装。发布任务不得顺带安装或重启用户正在使用的客户端。
