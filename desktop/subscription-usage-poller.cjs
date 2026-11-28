@@ -1,6 +1,6 @@
 // Background metadata only. Fetches do not hold the application's IPC busy lock.
-function createSubscriptionUsagePoller({ list, fetchUsage, applyUsage, isBusy = () => false, intervalMs = 60 * 1000 }) {
-  let timer, running, disposed = false;
+function createSubscriptionUsagePoller({ list, fetchUsage, applyUsage, isBusy = () => false, intervalMs = 15 * 60 * 1000, initialDelayMs = 5 * 1000 }) {
+  let timer, initialTimer, running, disposed = false;
   function tick() {
     if (disposed || isBusy()) return Promise.resolve();
     if (running) return running;
@@ -17,10 +17,18 @@ function createSubscriptionUsagePoller({ list, fetchUsage, applyUsage, isBusy = 
   }
   function start() {
     if (disposed || timer) return;
+    if (initialDelayMs >= 0 && typeof setTimeout === 'function') {
+      initialTimer = setTimeout(() => { initialTimer = null; void tick().catch(() => {}); }, initialDelayMs);
+      initialTimer.unref?.();
+    }
     timer = setInterval(() => { void tick().catch(() => {}); }, intervalMs);
     timer.unref?.();
   }
-  function dispose() { disposed = true; clearInterval(timer); }
+  function dispose() {
+    disposed = true;
+    if (initialTimer) { clearTimeout(initialTimer); initialTimer = null; }
+    clearInterval(timer);
+  }
   return { start, tick, dispose };
 }
 module.exports = { createSubscriptionUsagePoller };

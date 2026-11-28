@@ -7,16 +7,25 @@ import { defaultState, parseLink, createConfig } from '../shared/proxy.js';
 const { createSubscriptionUsagePoller } = createRequire(import.meta.url)('../desktop/subscription-usage-poller.cjs');
 const main = await fs.readFile('electron/main.cjs', 'utf8');
 const automaticFunctions = main.slice(main.indexOf('async function fetchSubscriptionUsage('), main.indexOf('async function importSubscription('));
-test('polling starts once at a one-minute interval and stops cleanly', async () => {
-  const timers = [], cleared = [], module = { exports: {} }; let fetches = 0;
+test('polling starts once with a startup refresh and 15-minute interval and stops cleanly', async () => {
+  const timers = [], cleared = [], timeouts = [], clearedTimeouts = [], module = { exports: {} }; let fetches = 0;
   vm.runInNewContext(await fs.readFile('desktop/subscription-usage-poller.cjs', 'utf8'), { module, Promise,
+    setTimeout: (fn, ms) => { const t = { fn, ms, unref() {} }; timeouts.push(t); return t; },
+    clearTimeout: t => clearedTimeouts.push(t),
     setInterval: (fn, ms) => { const timer = { fn, ms, unref() {} }; timers.push(timer); return timer; },
     clearInterval: timer => cleared.push(timer)
   });
   const poller = module.exports.createSubscriptionUsagePoller({ list: () => [{ id: 'source' }], fetchUsage: async () => { fetches++; }, applyUsage: async () => {} });
-  poller.start(); poller.start(); assert.equal(timers.length, 1); assert.equal(timers[0].ms, 60000); assert.equal(fetches, 0);
-  timers[0].fn(); await poller.tick(); assert.equal(fetches, 1);
-  poller.dispose(); assert.equal(cleared[0], timers[0]); await poller.tick(); poller.start(); assert.equal(fetches, 1); assert.equal(timers.length, 1);
+  poller.start(); poller.start();
+  assert.equal(timers.length, 1); assert.equal(timers[0].ms, 15 * 60 * 1000);
+  assert.equal(timeouts.length, 1); assert.equal(timeouts[0].ms, 5000);
+  assert.equal(fetches, 0);
+  timeouts[0].fn(); await poller.tick(); assert.equal(fetches, 1);
+  timers[0].fn(); await poller.tick(); assert.equal(fetches, 2);
+  poller.dispose(); assert.equal(cleared[0], timers[0]); await poller.tick(); poller.start(); assert.equal(fetches, 2); assert.equal(timers.length, 1);
+  // Disposing before the initial startup refresh fires cancels the pending timeout.
+  const pending = module.exports.createSubscriptionUsagePoller({ list: () => [{ id: 'source' }], fetchUsage: async () => { fetches++; }, applyUsage: async () => {} });
+  pending.start(); pending.dispose(); assert.equal(clearedTimeouts.length, 1);
 });
 test('all subscriptions refresh independently and one failure does not prevent the others', async () => {
   const applied = [], fetched = [], sources = [{ id: 'bad' }, { id: 'one' }, { id: 'two' }];
@@ -56,10 +65,16 @@ test('automatic refresh saves only provider usage and information, preserving no
   const f = fixture(), beforeConfig = JSON.stringify(createConfig(f.state)), beforeSession = JSON.stringify(f.session);
   const result = await f.fetch(f.subscription); assert.equal(await f.apply(f.subscription, result), true);
   const next = f.context.state; assert.equal(next.subscriptions[0].usage.download, 150); assert.ok(next.subscriptions[0].usageUpdatedAt > 0);
+  // Empty result.information must not erase previously known provider expiry/remaining info nodes.
+  assert.equal(next.informationNodes.length, 1); assert.equal(next.informationNodes[0].name, '到期时间：2027-01-01');
   assert.equal(next.nodes, f.state.nodes); assert.equal(next.rules, f.state.rules); assert.equal(next.websiteRules, f.state.websiteRules);
   assert.equal(next.nodeChecks, f.state.nodeChecks); assert.equal(next.selectedNodeId, 'active'); assert.equal(f.context.session, f.session);
   assert.equal(JSON.stringify(f.session), beforeSession); assert.equal(JSON.stringify(createConfig(next)), beforeConfig);
   assert.deepEqual(f.stats(), { saves: 1, broadcasts: 1 }); assert.equal(f.context.busy, false);
+  // When usage and information are unchanged, skip disk write and busy lock while refreshing timestamp.
+  const latestSub = next.subscriptions[0];
+  assert.equal(await f.apply(latestSub, result), false);
+  assert.deepEqual(f.stats(), { saves: 1, broadcasts: 2 }); assert.equal(f.context.busy, false);
 });
 test('stale responses cannot recreate deleted subscriptions or overwrite manual refresh, rename or URL changes', async () => {
   for (const patch of [[], [{ id: 'source', url: 'https://replacement.example/sub' }], [{ id: 'source', name: 'Renamed', usageUpdatedAt: Date.now() }]]) {

@@ -70,9 +70,7 @@ test('routing UI has compact filters without a separate default path, header act
   assert.equal(html.includes('添加规则'), false); assert.equal(html.includes('routing-context'), false); assert.equal(html.includes('下次连接生效</span>'), false);
   assert.ok(html.includes('<header class="page-header"><h1>分流控制</h1></header>'));
   assert.ok(html.includes('data-action="reject"')); assert.equal(html.includes('默认路径'), false); assert.equal(html.includes('aria-label="默认网络路径"'), false); assert.equal(html.includes('default-route'), false);
-  assert.ok(html.includes('仅控制走系统代理的程序 · 网站规则优先于程序规则'));
-  const globalHtml = renderToStaticMarkup(React.createElement(ProgramRouting, { data: { ...data, settings: { ...data.settings, outboundMode: 'global' } }, busy: false }));
-  assert.ok(globalHtml.includes('当前为全局模式，切换到规则模式后生效'));
+  assert.equal(html.includes('website-rule-hint'), false);
   const row = html.slice(html.indexOf('class="program-row"')).split('</select>')[0]; assert.equal(row.includes('<svg'), false);
   const css = await fs.readFile('src/styles.css', 'utf8');
   assert.match(css, /\.program-routing\s*\{[^}]*height: 100%;[^}]*min-height: 0/);

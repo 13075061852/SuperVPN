@@ -1,24 +1,57 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import { DOMESTIC_DIRECT_DOMAINS, seedDomesticWebsiteRules } from '../shared/default-website-rules.js';
+import { DOMESTIC_DIRECT_DOMAINS, DEPRECATED_DOMESTIC_DIRECT_DOMAINS, seedDomesticWebsiteRules } from '../shared/default-website-rules.js';
 import { websiteRuleList, setWebsiteRule, removeWebsiteRule, normalizeDomain } from '../shared/website-rules.js';
 import { defaultState, parseLink, createConfig } from '../shared/proxy.js';
-test('domestic presets contain valid unique explicit domains and never blanket bypass all cn or international sites', () => {
+test('domestic presets contain valid unique non-overlapping explicit domains and exclude dead or overseas domains', () => {
   assert.equal(new Set(DOMESTIC_DIRECT_DOMAINS).size, DOMESTIC_DIRECT_DOMAINS.length);
-  for (const domain of DOMESTIC_DIRECT_DOMAINS) assert.equal(normalizeDomain(domain), domain);
-  for (const domain of ['baidu.com', 'qq.com', 'bilibili.com', 'douyin.com', 'taobao.com', 'jd.com', 'deepseek.com', 'doubao.com', 'coze.cn', 'aliyun.com', '12306.cn']) assert.ok(DOMESTIC_DIRECT_DOMAINS.includes(domain));
-  for (const domain of ['cn', 'com', 'tiktok.com', 'youtube.com', 'google.com', 'coze.com', 'bytedance.com', 'byteoversea.com']) assert.equal(DOMESTIC_DIRECT_DOMAINS.includes(domain), false);
+  for (const domain of DOMESTIC_DIRECT_DOMAINS) {
+    assert.equal(normalizeDomain(domain), domain);
+    assert.equal(DOMESTIC_DIRECT_DOMAINS.some(other => other !== domain && domain.endsWith(`.${other}`)), false, `${domain} overlaps broader preset`);
+  }
+  for (const domain of ['baidu.com', 'qq.com', 'tencent.com', 'bilibili.com', 'bilivideo.cn', 'douyin.com', 'taobao.com', 'jd.com', 'deepseek.com', 'doubao.com', 'coze.cn', 'moonshot.cn', 'aliyun.com', 'aliyuncs.com', 'myqcloud.com', 'icbc.com.cn', 'edu.cn', 'douban.com', 'alipan.com', '12306.cn']) assert.ok(DOMESTIC_DIRECT_DOMAINS.includes(domain), domain);
+  for (const domain of ['cn', 'com', 'tiktok.com', 'youtube.com', 'google.com', 'coze.com', 'bytedance.com', 'byteoversea.com', ...DEPRECATED_DOMESTIC_DIRECT_DOMAINS]) assert.equal(DOMESTIC_DIRECT_DOMAINS.includes(domain), false, domain);
 });
 test('new and old profiles gain direct defaults once without changing nodes, sources, settings or custom rules', () => {
-  const original = { ...defaultState(), websiteRules: [{ id: 'custom', domain: 'DEEPSEEK.COM', action: 'proxy', enabled: false }, { id: 'aliyun', domain: 'aliyun.com', action: 'reject', enabled: true }] };
+  const original = { ...defaultState(), websiteRules: [{ id: 'custom', domain: 'DEEPSEEK.COM', action: 'proxy', enabled: false }, { id: 'com-cn', domain: 'com.cn', action: 'reject', enabled: true }] };
   const result = seedDomesticWebsiteRules(original);
   assert.equal(original.websiteRules.length, 2); assert.equal(result.nodes, original.nodes); assert.equal(result.subscriptions, original.subscriptions); assert.equal(result.settings, original.settings);
   assert.equal(result.websiteRules[0], original.websiteRules[0]);
-  assert.equal(result.websiteRules.some(rule => rule.domain === 'tongyi.aliyun.com'), false, 'preset must not override an existing broader exception');
+  assert.equal(result.websiteRules.some(rule => rule.domain === 'icbc.com.cn' || rule.domain === 'sina.com.cn'), false, 'preset must not override an existing broader exception');
   assert.ok(result.websiteRules.slice(2).every(rule => rule.action === 'direct' && rule.enabled));
   assert.equal(websiteRuleList(result).length, result.websiteRules.length); assert.equal(seedDomesticWebsiteRules(result), result);
-  assert.ok(seedDomesticWebsiteRules({ nodes: [] }).websiteRules.length > 80);
+  assert.ok(seedDomesticWebsiteRules({ nodes: [] }).websiteRules.length > 180);
+});
+test('v1 to v2 migration prunes untouched dead/redundant presets, adds new scenarios, and respects user edits/deletions', () => {
+  const v1State = {
+    ...defaultState(),
+    domesticWebsiteRulesVersion: 1,
+    websiteRules: [
+      { id: 'domestic-direct:baidu.com', domain: 'baidu.com', action: 'direct', enabled: true },
+      // User deleted douyin.com in v1; v2 migration must NOT resurrect it.
+      { id: 'domestic-direct:qwen.cn', domain: 'qwen.cn', action: 'direct', enabled: true },
+      { id: 'domestic-direct:tongyi.aliyun.com', domain: 'tongyi.aliyun.com', action: 'direct', enabled: true },
+      { id: 'domestic-direct:cloud.tencent.com', domain: 'cloud.tencent.com', action: 'direct', enabled: true },
+      // User customized tencentcloud.com to proxy; migration must keep user customization.
+      { id: 'domestic-direct:tencentcloud.com', domain: 'tencentcloud.com', action: 'proxy', enabled: true },
+      // User manually added miui.com; migration must keep manual rules.
+      { id: 'manual-miui', domain: 'miui.com', action: 'direct', enabled: true },
+    ]
+  };
+  const upgraded = seedDomesticWebsiteRules(v1State);
+  assert.equal(upgraded.domesticWebsiteRulesVersion, 2);
+  assert.equal(upgraded.websiteRules.some(r => r.domain === 'qwen.cn'), false);
+  assert.equal(upgraded.websiteRules.some(r => r.domain === 'tongyi.aliyun.com'), false);
+  assert.equal(upgraded.websiteRules.some(r => r.domain === 'cloud.tencent.com'), false);
+  assert.equal(upgraded.websiteRules.some(r => r.domain === 'douyin.com'), false, 'deleted v1 preset must stay deleted');
+  assert.equal(upgraded.websiteRules.find(r => r.domain === 'tencentcloud.com')?.action, 'proxy');
+  assert.equal(upgraded.websiteRules.find(r => r.domain === 'miui.com')?.id, 'manual-miui');
+  assert.ok(upgraded.websiteRules.some(r => r.domain === 'tencent.com' && r.action === 'direct'));
+  assert.ok(upgraded.websiteRules.some(r => r.domain === 'moonshot.cn' && r.action === 'direct'));
+  assert.ok(upgraded.websiteRules.some(r => r.domain === 'icbc.com.cn' && r.action === 'direct'));
+  assert.ok(upgraded.websiteRules.some(r => r.domain === 'edu.cn' && r.action === 'direct'));
+  assert.equal(seedDomesticWebsiteRules(upgraded), upgraded);
 });
 test('edited, disabled and deleted presets remain that way across restarts', () => {
   let state = seedDomesticWebsiteRules(defaultState());

@@ -149,11 +149,26 @@ async function applyAutomaticUsage(subscription, result) {
   if (quitting || busy || !(state.subscriptions || []).some(sub => sub === subscription)) return false;
   // Missing provider metadata is not evidence of zero usage or an empty plan.
   if (!result.usage && !result.information.length) return false;
+  const nextUsage = result.usage || subscription.usage;
+  const currentInfo = (state.informationNodes || []).filter(node => node.subscriptionId === subscription.id);
+  const nextSubInfo = result.information.length
+    ? result.information.map(node => ({ ...node, subscriptionId: subscription.id }))
+    : currentInfo;
+  const usageChanged = JSON.stringify(subscription.usage || null) !== JSON.stringify(nextUsage || null);
+  const infoChanged = result.information.length > 0 && JSON.stringify(currentInfo.map(n => n.name)) !== JSON.stringify(nextSubInfo.map(n => n.name));
+  const nextSubscriptions = state.subscriptions.map(sub => sub === subscription ? { ...sub, usage: nextUsage, usageUpdatedAt: Date.now() } : sub);
+  if (!usageChanged && !infoChanged) {
+    state = { ...state, subscriptions: nextSubscriptions };
+    broadcast();
+    return false;
+  }
   busy = true;
   const previous = state;
   state = { ...state,
-    subscriptions: state.subscriptions.map(sub => sub === subscription ? { ...sub, usage: result.usage || sub.usage, usageUpdatedAt: Date.now() } : sub),
-    informationNodes: [...(state.informationNodes || []).filter(node => node.subscriptionId !== subscription.id), ...result.information.map(node => ({ ...node, subscriptionId: subscription.id }))]
+    subscriptions: nextSubscriptions,
+    informationNodes: infoChanged
+      ? [...(state.informationNodes || []).filter(node => node.subscriptionId !== subscription.id), ...nextSubInfo]
+      : (state.informationNodes || [])
   };
   try { await save(); return true; }
   catch { state = previous; return false; }
@@ -314,8 +329,10 @@ async function handle(method, payload) {
       const fetched = await fetchSubscription(sub.url);
       const parsed = subscriptionApi.parseSubscription(fetched.body);
       const previous = state;
-      state = { ...state, subscriptions: state.subscriptions.map(s => s.id === sub.id ? { ...s, usage: fetched.usage, usageUpdatedAt: Date.now() } : s),
-        informationNodes: [...(state.informationNodes || []).filter(n => n.subscriptionId !== sub.id), ...parsed.information.map(n => ({ ...n, subscriptionId: sub.id }))] };
+      state = { ...state, subscriptions: state.subscriptions.map(s => s.id === sub.id ? { ...s, usage: fetched.usage || s.usage, usageUpdatedAt: Date.now() } : s),
+        informationNodes: parsed.information.length
+          ? [...(state.informationNodes || []).filter(n => n.subscriptionId !== sub.id), ...parsed.information.map(n => ({ ...n, subscriptionId: sub.id }))]
+          : (state.informationNodes || []) };
       try { await save(); } catch (e) { state = previous; throw e; }
     } else if (method === 'refreshSubscription') {
       const sub = (state.subscriptions || []).find(s => s.id === payload);

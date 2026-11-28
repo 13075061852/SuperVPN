@@ -127,10 +127,10 @@ after(async () => { await vite?.close(); if (cache) await fs.rm(cache, { recursi
 test('website UI enables connected deferred editing and protects older backends', () => {
   const data = { ...defaultState(), session: { connected: false }, environment: { desktop: true, websiteRouting: true }, websiteRules: [{ id: 'web-1', domain: 'example.com', action: 'direct', enabled: true }] };
   const render = Component => renderToStaticMarkup(React.createElement(Component, { data, busy: false, onAction: () => {} }));
-  let html = render(Routing); assert.ok(html.includes('分流类型')); assert.ok(html.includes('网站')); assert.ok(html.includes('程序')); assert.ok(html.includes('网站优先于程序规则'));
+  let html = render(Routing); assert.ok(html.includes('分流类型')); assert.ok(html.includes('网站')); assert.ok(html.includes('程序')); assert.equal(html.includes('website-rule-hint'), false);
   assert.match(html, /aria-label="新网站网络规则"[\s\S]*?<option value="direct" selected="">直连<\/option>/);
   assert.ok(html.includes('example.com 网站规则')); assert.ok(html.includes('删除 example.com')); assert.doesNotMatch(html, /<select[^>]*disabled/);
-  data.session.connected = true; data.environment.websiteOpening = true; data.environment.connectedEditing = true; html = render(WebsiteRouting); assert.ok(html.includes('保存后下次连接生效')); assert.doesNotMatch(html, /<select[^>]*disabled/);
+  data.session.connected = true; data.environment.websiteOpening = true; data.environment.connectedEditing = true; html = render(WebsiteRouting); assert.equal(html.includes('website-rule-hint'), false); assert.doesNotMatch(html, /<select[^>]*disabled/);
   assert.doesNotMatch(html, /aria-label="删除 example.com 网站规则"[^>]*disabled/);
   data.environment.connectedEditing = false; const legacy = render(WebsiteRouting); assert.ok(legacy.includes('下次正常启动')); assert.match(legacy, /<select[^>]*disabled/);
   data.environment.connectedEditing = true;
@@ -138,12 +138,12 @@ test('website UI enables connected deferred editing and protects older backends'
   data.environment.websiteOpening = false; html = render(WebsiteRouting);
   assert.match(html, /aria-label="在默认浏览器打开 example.com"[^>]*disabled/);
   data.session.connected = false; data.environment.websiteRouting = false; html = render(WebsiteRouting); assert.ok(html.includes('下次正常启动')); assert.match(html, /<input[^>]*disabled/);
-  // Connected non-rule mode must still warn that rules require Rule mode, and Routing must surface reconnectRequired.
+  // Routing keeps reconnectRequired notice and subdomain conflict note without static hint clutter.
   data.environment.websiteRouting = true; data.session.connected = true; data.reconnectRequired = true; data.settings.outboundMode = 'global';
   data.websiteRules = [{ id: 'sub', domain: 'tongyi.aliyun.com', action: 'direct', enabled: true }, { id: 'root', domain: 'aliyun.com', action: 'proxy', enabled: true }];
   const routingHtml = render(Routing);
   assert.ok(routingHtml.includes('设置已更改，需要重连后生效'));
-  assert.ok(routingHtml.includes('当前为全局模式，切换到规则模式后生效；保存后下次连接生效'));
+  assert.equal(routingHtml.includes('website-rule-hint'), false);
   assert.ok(routingHtml.includes('子域名 tongyi.aliyun.com 优先（直连）'));
 });
 test('real sing-box matches Windows program rules case-insensitively without touching system proxy', { skip: process.platform !== 'win32' || !existsSync('resources/core/sing-box.exe'), timeout: 15000 }, async () => {

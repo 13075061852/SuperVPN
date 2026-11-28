@@ -5,7 +5,7 @@ import { editNode } from '../shared/source-edits.js';
 import { validateSystemMode } from '../shared/connection-mode.js';
 import { setWebsiteRule, removeWebsiteRule } from '../shared/website-rules.js';
 import { seedDomesticWebsiteRules } from '../shared/default-website-rules.js';
-let preview = { ...seedDomesticWebsiteRules(defaultState()), session: { connected: false, startedAt: null, upSpeed: 0, downSpeed: 0, connections: 0 }, logs: [], environment: { desktop: false, admin: false, coreReady: false, version: '0.6.7' }, busy: false };
+let preview = { ...seedDomesticWebsiteRules(defaultState()), session: { connected: false, startedAt: null, upSpeed: 0, downSpeed: 0, connections: 0 }, logs: [], environment: { desktop: false, admin: false, coreReady: false, version: '0.6.8' }, busy: false };
 // Browser preview is intentionally ephemeral: no credentials in localStorage.
 export const bridge = globalThis.window?.supervpn || {
   onUpdate: () => () => {},

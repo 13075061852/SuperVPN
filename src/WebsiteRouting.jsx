@@ -9,16 +9,7 @@ export default function WebsiteRouting({ data, busy, onAction }) {
   const locked = busy || legacyConnected || !supported;
   const rules = data.websiteRules || [];
   const activeRules = rules.filter(rule => rule.enabled !== false);
-  const outboundMode = data.settings?.outboundMode || 'rule';
-  const modeLabel = outboundMode === 'global' ? '全局' : outboundMode === 'direct' ? '直连' : '规则';
   const hint = !supported || legacyConnected ? '网站规则接口下次正常启动后可用' : '域名及其子域名；保存后下次连接生效';
-  const statusHint = !supported || legacyConnected
-    ? hint
-    : outboundMode !== 'rule'
-      ? (data.session.connected ? `当前为${modeLabel}模式，切换到规则模式后生效；保存后下次连接生效` : '切换到规则模式后生效')
-      : data.session.connected
-        ? '保存后下次连接生效'
-        : '包含子域名 · 网站优先于程序规则';
   async function add(event) {
     event.preventDefault(); if (locked) return;
     try {
@@ -34,7 +25,7 @@ export default function WebsiteRouting({ data, busy, onAction }) {
       <button type="submit" className="button primary" disabled={locked || !domain.trim()} title={hint}><Plus size={14} aria-hidden="true"/>添加</button>
     </form>
     {error && <p className="form-error" role="alert">{error}</p>}
-    <p className={`website-rule-hint${outboundMode !== 'rule' && supported && !legacyConnected ? ' is-warning' : ''}`}>{statusHint}</p>
+    {(!supported || legacyConnected) && <p className="routing-notice">{hint}</p>}
     <div className="website-rule-list" tabIndex={0} aria-label="已配置网站">
       {rules.map(rule => {
         const overrides = rule.enabled === false ? [] : activeRules.filter(other => other.action !== rule.action && other.domain.endsWith(`.${rule.domain}`));
